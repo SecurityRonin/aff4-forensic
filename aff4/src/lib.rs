@@ -321,4 +321,16 @@ mod tests {
         let (start, end) = chunk_bounds_from_index(&index, 1).expect("bounds");
         assert_eq!((start, end), (100, 220));
     }
+
+    // ── Property tests: open() never panics on arbitrary input ────────────────
+
+    proptest::proptest! {
+        #[test]
+        fn open_never_panics_on_arbitrary_bytes(
+            bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..8192)
+        ) {
+            let f = write_tmp(&bytes);
+            let _ = Aff4Reader::open(f.path());
+        }
+    }
 }
