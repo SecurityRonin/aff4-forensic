@@ -11,7 +11,7 @@ mod meta;
 pub mod testutil;
 
 pub use error::Aff4Error;
-use meta::{Compression, StreamMeta};
+use meta::{Compression, parse_turtle};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -45,37 +45,126 @@ impl Aff4Reader {
     /// Reads `information.turtle` from the ZIP container to locate the primary
     /// `aff4:ImageStream` and its geometry (size, chunk size, compression).
     pub fn open(path: &Path) -> Result<Self, Aff4Error> {
-        todo!()
+        let file = File::open(path)?;
+        let mut archive = ZipArchive::new(file)?;
+
+        let turtle = {
+            let mut entry = archive.by_name("information.turtle")?;
+            let mut content = String::new();
+            entry.read_to_string(&mut content)?;
+            content
+        };
+
+        let meta = parse_turtle(&turtle)?;
+        let zip_base = meta.stream_arn
+            .strip_prefix("aff4://")
+            .unwrap_or(&meta.stream_arn)
+            .to_string();
+
+        Ok(Self {
+            archive,
+            zip_base,
+            virtual_size: meta.virtual_size,
+            chunk_size: meta.chunk_size,
+            chunks_per_segment: meta.chunks_per_segment,
+            compression: meta.compression,
+            pos: 0,
+        })
     }
 
     /// Virtual disk size in bytes (as declared in `aff4:size`).
     pub fn virtual_disk_size(&self) -> u64 {
-        todo!()
+        self.virtual_size
     }
 
-    fn read_chunk(&mut self, _chunk_idx: u64) -> Result<Vec<u8>, Aff4Error> {
-        todo!()
+    /// Read a single chunk by its absolute index across all bevies.
+    fn read_chunk(&mut self, chunk_idx: u64) -> Result<Vec<u8>, Aff4Error> {
+        let segment_idx = chunk_idx / self.chunks_per_segment;
+        let chunk_in_seg = chunk_idx % self.chunks_per_segment;
+
+        let segment_name = format!("{}/{:08x}", self.zip_base, segment_idx);
+        let index_name = format!("{}.index", segment_name);
+
+        // Bevy index: array of u32 LE cumulative end-offsets per chunk
+        let index_data = self.read_zip_entry_bytes(&index_name)?;
+        let (chunk_start, chunk_end) = chunk_bounds_from_index(&index_data, chunk_in_seg)?;
+
+        let bevy_data = self.read_zip_entry_bytes(&segment_name)?;
+
+        if chunk_end > bevy_data.len() {
+            return Err(Aff4Error::BadFormat(format!(
+                "chunk bounds ({chunk_start}..{chunk_end}) exceed bevy size ({})",
+                bevy_data.len()
+            )));
+        }
+
+        let compressed = &bevy_data[chunk_start..chunk_end];
+
+        match &self.compression {
+            Compression::Null => Ok(compressed.to_vec()),
+            Compression::Deflate => {
+                let mut dec = flate2::read::ZlibDecoder::new(compressed);
+                let mut out = Vec::with_capacity(self.chunk_size as usize);
+                dec.read_to_end(&mut out)
+                    .map_err(|e| Aff4Error::BadFormat(format!("deflate decode: {e}")))?;
+                Ok(out)
+            }
+        }
     }
 
-    fn read_zip_entry_bytes(&mut self, _name: &str) -> Result<Vec<u8>, Aff4Error> {
-        todo!()
+    fn read_zip_entry_bytes(&mut self, name: &str) -> Result<Vec<u8>, Aff4Error> {
+        let mut entry = self.archive.by_name(name)?;
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data)?;
+        Ok(data)
     }
 }
 
 impl Read for Aff4Reader {
-    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
-        todo!()
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() || self.pos >= self.virtual_size {
+            return Ok(0);
+        }
+
+        let remaining = (self.virtual_size - self.pos) as usize;
+        let to_read = buf.len().min(remaining);
+
+        let chunk_idx = self.pos / self.chunk_size;
+        let offset_in_chunk = (self.pos % self.chunk_size) as usize;
+
+        let chunk = self
+            .read_chunk(chunk_idx)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+        let available = chunk.len().saturating_sub(offset_in_chunk);
+        let n = to_read.min(available);
+
+        if n == 0 {
+            return Ok(0);
+        }
+
+        buf[..n].copy_from_slice(&chunk[offset_in_chunk..offset_in_chunk + n]);
+        self.pos += n as u64;
+        Ok(n)
     }
 }
 
 impl Seek for Aff4Reader {
-    fn seek(&mut self, _pos: SeekFrom) -> std::io::Result<u64> {
-        todo!()
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        let new_pos = match pos {
+            SeekFrom::Start(n) => n as i64,
+            SeekFrom::End(n) => self.virtual_size as i64 + n,
+            SeekFrom::Current(n) => self.pos as i64 + n,
+        };
+        if new_pos < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "seek before start of stream",
+            ));
+        }
+        self.pos = new_pos as u64;
+        Ok(self.pos)
     }
-}
-
-fn stream_arn_to_zip_base(arn: &str) -> String {
-    arn.strip_prefix("aff4://").unwrap_or(arn).to_string()
 }
 
 fn chunk_bounds_from_index(index: &[u8], chunk_in_seg: u64) -> Result<(usize, usize), Aff4Error> {
