@@ -42,6 +42,14 @@ pub(crate) fn parse_turtle(turtle: &str) -> Result<StreamMeta, Aff4Error> {
     let chunk_size = extract_pred_u64(image_block, "aff4:chunkSize")?;
     let chunks_per_segment = extract_pred_u64(image_block, "aff4:chunksInSegment")?;
 
+    // Validate geometry before values feed division arithmetic in the reader.
+    if chunk_size == 0 {
+        return Err(Aff4Error::BadFormat("aff4:chunkSize must be > 0".into()));
+    }
+    if chunks_per_segment == 0 {
+        return Err(Aff4Error::BadFormat("aff4:chunksInSegment must be > 0".into()));
+    }
+
     let compression = if image_block.contains("DeflateCompressor") {
         Compression::Deflate
     } else {
