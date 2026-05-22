@@ -209,6 +209,28 @@ mod tests {
         f
     }
 
+    // ── Panic regression tests (RED until meta.rs validates chunk geometry) ───
+
+    #[test]
+    fn chunk_size_zero_rejected() {
+        // chunk_size=0 in turtle causes div-by-zero on `self.pos / self.chunk_size`
+        // (lib.rs Read::read). Currently open() succeeds; after fix, open() returns Err.
+        let img = testutil::test_aff4_with_geometry(0, 1);
+        let f = write_tmp(&img);
+        assert!(Aff4Reader::open(f.path()).is_err());
+    }
+
+    #[test]
+    fn chunks_per_segment_zero_rejected() {
+        // chunks_per_segment=0 causes div-by-zero on `chunk_idx / self.chunks_per_segment`
+        // (lib.rs read_chunk). Currently open() succeeds; after fix, open() returns Err.
+        let img = testutil::test_aff4_with_geometry(512, 0);
+        let f = write_tmp(&img);
+        assert!(Aff4Reader::open(f.path()).is_err());
+    }
+
+    // ── Existing tests ────────────────────────────────────────────────────────
+
     #[test]
     fn open_nonexistent_returns_err() {
         assert!(Aff4Reader::open(Path::new("/tmp/nope_aff4_issen.aff4")).is_err());
