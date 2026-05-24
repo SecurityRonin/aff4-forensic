@@ -56,10 +56,19 @@ impl Aff4Reader {
         };
 
         let meta = parse_turtle(&turtle)?;
-        let zip_base = meta.stream_arn
+
+        // Detect the actual ZIP entry prefix. Real AFF4 images from Evimetry and
+        // aff4-imager URL-encode the IRI in entry names: aff4%3A%2F%2F{uuid}/…
+        // Synthetic test fixtures use the bare UUID. Try encoded form first.
+        let stripped_arn = meta.stream_arn
             .strip_prefix("aff4://")
-            .unwrap_or(&meta.stream_arn)
-            .to_string();
+            .unwrap_or(&meta.stream_arn);
+        let encoded_prefix = format!("aff4%3A%2F%2F{stripped_arn}");
+        let zip_base = if archive.file_names().any(|n| n.starts_with(&encoded_prefix)) {
+            encoded_prefix
+        } else {
+            stripped_arn.to_string()
+        };
 
         Ok(Self {
             archive,
@@ -89,6 +98,11 @@ impl Aff4Reader {
         let index_data = self.read_zip_entry_bytes(&index_name)?;
         let (chunk_start, chunk_end) = chunk_bounds_from_index(&index_data, chunk_in_seg)?;
 
+        // Sparse chunk: 0-byte index entry means virtual zeros.
+        if chunk_start == chunk_end {
+            return Ok(vec![0u8; self.chunk_size as usize]);
+        }
+
         let bevy_data = self.read_zip_entry_bytes(&segment_name)?;
 
         if chunk_end > bevy_data.len() {
@@ -108,6 +122,11 @@ impl Aff4Reader {
                 dec.read_to_end(&mut out)
                     .map_err(|e| Aff4Error::BadFormat(format!("deflate decode: {e}")))?;
                 Ok(out)
+            }
+            Compression::Snappy => {
+                let mut dec = snap::raw::Decoder::new();
+                dec.decompress_vec(compressed)
+                    .map_err(|e| Aff4Error::BadFormat(format!("snappy decode: {e}")))
             }
         }
     }

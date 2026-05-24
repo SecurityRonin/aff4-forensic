@@ -9,6 +9,7 @@ use crate::Aff4Error;
 pub(crate) enum Compression {
     Null,
     Deflate,
+    Snappy,
 }
 
 #[derive(Debug)]
@@ -50,7 +51,11 @@ pub(crate) fn parse_turtle(turtle: &str) -> Result<StreamMeta, Aff4Error> {
         return Err(Aff4Error::BadFormat("aff4:chunksInSegment must be > 0".into()));
     }
 
-    let compression = if image_block.contains("DeflateCompressor") {
+    // Detect compression from the compressionMethod URI.
+    // Real images use the full URI; some tools use the short name.
+    let compression = if image_block.contains("snappy") || image_block.contains("google.com/p/snappy") {
+        Compression::Snappy
+    } else if image_block.contains("rfc1950") || image_block.contains("DeflateCompressor") {
         Compression::Deflate
     } else {
         Compression::Null

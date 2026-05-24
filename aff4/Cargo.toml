@@ -16,6 +16,7 @@ test-helpers = []
 thiserror = "2"
 zip       = "2"
 flate2    = "1"
+snap      = "1"
 
 [dev-dependencies]
 tempfile  = "3"
