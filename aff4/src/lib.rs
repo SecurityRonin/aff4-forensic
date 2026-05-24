@@ -94,9 +94,10 @@ impl Aff4Reader {
         let segment_name = format!("{}/{:08x}", self.zip_base, segment_idx);
         let index_name = format!("{}.index", segment_name);
 
-        // Bevy index: array of u32 LE cumulative end-offsets per chunk
+        // Bevy index: format-dependent (see chunk_bounds_from_index).
         let index_data = self.read_zip_entry_bytes(&index_name)?;
-        let (chunk_start, chunk_end) = chunk_bounds_from_index(&index_data, chunk_in_seg)?;
+        let (chunk_start, chunk_end) =
+            chunk_bounds_from_index(&index_data, chunk_in_seg, self.chunks_per_segment)?;
 
         // Sparse chunk: 0-byte index entry means virtual zeros.
         if chunk_start == chunk_end {
@@ -186,15 +187,24 @@ impl Seek for Aff4Reader {
     }
 }
 
-fn chunk_bounds_from_index(index: &[u8], chunk_in_seg: u64) -> Result<(usize, usize), Aff4Error> {
+/// Decode chunk byte bounds from a bevy index.
+///
+/// Two index formats exist:
+/// - **Evimetry** (AFF4 Standard v1.0): `index[i]` = cumulative END byte of chunk i.
+///   Array length = `chunks_per_segment × 4` bytes.
+/// - **Scudette / aff4-imager**: `index[i]` = START byte of chunk i;
+///   `index[chunks_per_segment]` = total bevy size.
+///   Array length = `(chunks_per_segment + 1) × 4` bytes.
+///
+/// The length discriminator is reliable: the two formats differ by exactly one entry.
+fn chunk_bounds_from_index(
+    index: &[u8],
+    chunk_in_seg: u64,
+    chunks_per_segment: u64,
+) -> Result<(usize, usize), Aff4Error> {
     let idx = chunk_in_seg as usize;
+    let n = chunks_per_segment as usize;
     let entry_size = 4usize;
-
-    if (idx + 1) * entry_size > index.len() {
-        return Err(Aff4Error::BadFormat(format!(
-            "bevy index too small for chunk {idx}"
-        )));
-    }
 
     fn read_u32(data: &[u8], byte_offset: usize) -> u32 {
         u32::from_le_bytes([
@@ -205,14 +215,33 @@ fn chunk_bounds_from_index(index: &[u8], chunk_in_seg: u64) -> Result<(usize, us
         ])
     }
 
-    let end = read_u32(index, idx * entry_size) as usize;
-    let start = if idx == 0 {
-        0
-    } else {
-        read_u32(index, (idx - 1) * entry_size) as usize
-    };
+    // Scudette: (n+1) entries; Evimetry: n entries.
+    let scudette = index.len() == (n + 1) * entry_size;
 
-    Ok((start, end))
+    if scudette {
+        if (idx + 2) * entry_size > index.len() {
+            return Err(Aff4Error::BadFormat(format!(
+                "bevy index (Scudette) too small for chunk {idx}"
+            )));
+        }
+        let start = read_u32(index, idx * entry_size) as usize;
+        let end = read_u32(index, (idx + 1) * entry_size) as usize;
+        Ok((start, end))
+    } else {
+        // Evimetry: need entry [idx].
+        if (idx + 1) * entry_size > index.len() {
+            return Err(Aff4Error::BadFormat(format!(
+                "bevy index too small for chunk {idx}"
+            )));
+        }
+        let end = read_u32(index, idx * entry_size) as usize;
+        let start = if idx == 0 {
+            0
+        } else {
+            read_u32(index, (idx - 1) * entry_size) as usize
+        };
+        Ok((start, end))
+    }
 }
 
 #[cfg(test)]
@@ -345,19 +374,21 @@ mod tests {
 
     #[test]
     fn chunk_bounds_from_index_single_chunk() {
+        // Evimetry: 1 entry (chunks_per_segment=1), index[0] = end of chunk 0.
         let end_offset: u32 = 512;
         let index = end_offset.to_le_bytes().to_vec();
-        let (start, end) = chunk_bounds_from_index(&index, 0).expect("bounds");
+        let (start, end) = chunk_bounds_from_index(&index, 0, 1).expect("bounds");
         assert_eq!((start, end), (0, 512));
     }
 
     #[test]
     fn chunk_bounds_from_index_second_chunk() {
+        // Evimetry: 2 entries (chunks_per_segment=2).
         let index: Vec<u8> = [100u32, 220u32]
             .iter()
             .flat_map(|v| v.to_le_bytes())
             .collect();
-        let (start, end) = chunk_bounds_from_index(&index, 1).expect("bounds");
+        let (start, end) = chunk_bounds_from_index(&index, 1, 2).expect("bounds");
         assert_eq!((start, end), (100, 220));
     }
 
