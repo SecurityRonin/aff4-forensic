@@ -91,6 +91,8 @@ before attempting to read the bevy segment.
 | Sparse chunk zero-fill | Yes | chunks 0-1 of Base-Linear |
 | DeflateCompressor (zlib) | Indirect | unit tests; no corpus file |
 | NullCompressor | Indirect | unit tests only |
+| LZ4 frame compression | Yes | `test_aff4_lz4` unit test (aff4-imager URI) |
+| Scudette bevy index format | Yes | `test_aff4_scudette` unit test (start-offset array) |
 | ExabyteSparse images | Open-only | `Base-ExabyteSparse.aff4` opens; full read not tested |
 | Hash verification | No | AFF4 hash streams not yet implemented |
 | Map streams (Base-Allocated) | No | allocated map parsing not yet implemented |
