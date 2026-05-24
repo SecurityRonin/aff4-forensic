@@ -79,3 +79,43 @@ pub fn test_aff4(data: &[u8]) -> Vec<u8> {
 
     zw.finish().expect("finish zip").into_inner()
 }
+
+/// Build a minimal AFF4 image using the Scudette/aff4-imager start-offset index format.
+///
+/// Unlike the Evimetry format (cumulative end-offsets, `index[0] != 0`), the
+/// Scudette format stores START offsets: `index[i]` = byte start of chunk i, and
+/// `index[chunks_per_segment]` = total bevy size. This means `index[0] == 0` always.
+pub fn test_aff4_scudette(data: &[u8]) -> Vec<u8> {
+    let mut chunk = vec![0u8; CHUNK_SIZE];
+    let n = data.len().min(CHUNK_SIZE);
+    chunk[..n].copy_from_slice(&data[..n]);
+
+    let turtle = format!(
+        "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n\
+         @prefix aff4: <http://aff4.org/Schema#> .\n\
+         <{STREAM_ARN}> rdf:type aff4:ImageStream ; \
+         aff4:size {CHUNK_SIZE} ; \
+         aff4:chunkSize {CHUNK_SIZE} ; \
+         aff4:chunksInSegment 1 ; \
+         aff4:compressionMethod aff4:NullCompressor .\n"
+    );
+
+    let cursor = std::io::Cursor::new(Vec::<u8>::new());
+    let mut zw = ZipWriter::new(cursor);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+
+    zw.start_file("information.turtle", opts).expect("start turtle");
+    zw.write_all(turtle.as_bytes()).expect("write turtle");
+
+    let bevy_name = format!("{ZIP_BASE}/00000000");
+    zw.start_file(bevy_name.as_str(), opts).expect("start bevy");
+    zw.write_all(&chunk).expect("write bevy");
+
+    // Scudette index: [start_0, end_0] = [0, CHUNK_SIZE]
+    let index_name = format!("{ZIP_BASE}/00000000.index");
+    zw.start_file(index_name.as_str(), opts).expect("start index");
+    zw.write_all(&0u32.to_le_bytes()).expect("write index start");
+    zw.write_all(&(CHUNK_SIZE as u32).to_le_bytes()).expect("write index end");
+
+    zw.finish().expect("finish zip").into_inner()
+}

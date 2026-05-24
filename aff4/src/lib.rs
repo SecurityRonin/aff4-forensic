@@ -248,6 +248,26 @@ mod tests {
         assert!(Aff4Reader::open(f.path()).is_err());
     }
 
+    // ── Scudette/aff4-imager start-offset bevy index format ──────────────────
+    //
+    // aff4-imager (Scudette) writes index[i] = START byte of chunk i, with
+    // index[n] = total bevy size. This means index[0] == 0 always.
+    // Evimetry writes index[i] = END byte (cumulative), so index[0] != 0.
+    // Without detection, the Scudette first chunk is misread as sparse (start==end==0).
+    #[test]
+    fn scudette_index_format_reads_data_not_zeros() {
+        let img = testutil::test_aff4_scudette(&[0xBBu8; 512]);
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open scudette aff4");
+        let mut buf = [0u8; 512];
+        reader.read_exact(&mut buf).expect("read");
+        assert_eq!(
+            buf, [0xBBu8; 512],
+            "Scudette index format (index[0]==0) must be detected and read correctly; \
+             without detection, chunk 0 is misidentified as sparse and returns zeros"
+        );
+    }
+
     // ── Existing tests ────────────────────────────────────────────────────────
 
     #[test]
