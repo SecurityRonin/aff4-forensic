@@ -80,6 +80,52 @@ pub fn test_aff4(data: &[u8]) -> Vec<u8> {
     zw.finish().expect("finish zip").into_inner()
 }
 
+/// Build a minimal AFF4 image with LZ4-frame-compressed chunks (aff4-imager style).
+///
+/// Uses the `lz4_flex` crate (dev-dep only) to compress `data` into an LZ4 frame.
+/// The turtle specifies `aff4:compressionMethod <https://github.com/lz4/lz4>` (aff4-imager URI).
+#[cfg(test)]
+pub fn test_aff4_lz4(data: &[u8]) -> Vec<u8> {
+    let mut chunk = vec![0u8; CHUNK_SIZE];
+    let n = data.len().min(CHUNK_SIZE);
+    chunk[..n].copy_from_slice(&data[..n]);
+
+    let mut compressed = Vec::new();
+    {
+        use std::io::Write as _;
+        let mut enc = lz4_flex::frame::FrameEncoder::new(&mut compressed);
+        enc.write_all(&chunk).expect("lz4 compress");
+        enc.finish().expect("lz4 finish");
+    }
+
+    let turtle = format!(
+        "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n\
+         @prefix aff4: <http://aff4.org/Schema#> .\n\
+         <{STREAM_ARN}> rdf:type aff4:ImageStream ; \
+         aff4:size {CHUNK_SIZE} ; \
+         aff4:chunkSize {CHUNK_SIZE} ; \
+         aff4:chunksInSegment 1 ; \
+         aff4:compressionMethod <https://github.com/lz4/lz4> .\n"
+    );
+
+    let cursor = std::io::Cursor::new(Vec::<u8>::new());
+    let mut zw = ZipWriter::new(cursor);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+
+    zw.start_file("information.turtle", opts).expect("start turtle");
+    zw.write_all(turtle.as_bytes()).expect("write turtle");
+
+    let bevy_name = format!("{ZIP_BASE}/00000000");
+    zw.start_file(bevy_name.as_str(), opts).expect("start bevy");
+    zw.write_all(&compressed).expect("write bevy");
+
+    let index_name = format!("{ZIP_BASE}/00000000.index");
+    zw.start_file(index_name.as_str(), opts).expect("start index");
+    zw.write_all(&(compressed.len() as u32).to_le_bytes()).expect("write index");
+
+    zw.finish().expect("finish zip").into_inner()
+}
+
 /// Build a minimal AFF4 image using the Scudette/aff4-imager start-offset index format.
 ///
 /// Unlike the Evimetry format (cumulative end-offsets, `index[0] != 0`), the

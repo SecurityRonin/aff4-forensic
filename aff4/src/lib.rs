@@ -277,6 +277,25 @@ mod tests {
         assert!(Aff4Reader::open(f.path()).is_err());
     }
 
+    // ── LZ4 frame compression (aff4-imager) ──────────────────────────────────
+    //
+    // aff4-imager uses LZ4 frame compression (magic 0x04224D18) with the URI
+    // <https://github.com/lz4/lz4>. Without LZ4 detection, the turtle falls
+    // through to Compression::Null and returns raw compressed bytes as data.
+    #[test]
+    fn lz4_compressed_chunk_reads_decompressed_data() {
+        let img = testutil::test_aff4_lz4(&[0xCCu8; 512]);
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open lz4 aff4");
+        let mut buf = [0u8; 512];
+        reader.read_exact(&mut buf).expect("read");
+        assert_eq!(
+            buf, [0xCCu8; 512],
+            "LZ4-compressed chunk must be decompressed; without LZ4 support, \
+             raw frame bytes are returned instead of [0xCC; 512]"
+        );
+    }
+
     // ── Scudette/aff4-imager start-offset bevy index format ──────────────────
     //
     // aff4-imager (Scudette) writes index[i] = START byte of chunk i, with
