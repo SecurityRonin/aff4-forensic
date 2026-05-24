@@ -129,6 +129,13 @@ impl Aff4Reader {
                 dec.decompress_vec(compressed)
                     .map_err(|e| Aff4Error::BadFormat(format!("snappy decode: {e}")))
             }
+            Compression::Lz4 => {
+                let mut dec = lz4_flex::frame::FrameDecoder::new(compressed);
+                let mut out = Vec::with_capacity(self.chunk_size as usize);
+                dec.read_to_end(&mut out)
+                    .map_err(|e| Aff4Error::BadFormat(format!("lz4 decode: {e}")))?;
+                Ok(out)
+            }
         }
     }
 

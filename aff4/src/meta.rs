@@ -10,6 +10,7 @@ pub(crate) enum Compression {
     Null,
     Deflate,
     Snappy,
+    Lz4,
 }
 
 #[derive(Debug)]
@@ -57,6 +58,8 @@ pub(crate) fn parse_turtle(turtle: &str) -> Result<StreamMeta, Aff4Error> {
         Compression::Snappy
     } else if image_block.contains("rfc1950") || image_block.contains("DeflateCompressor") {
         Compression::Deflate
+    } else if image_block.contains("lz4") || image_block.contains("github.com/lz4") {
+        Compression::Lz4
     } else {
         Compression::Null
     };
