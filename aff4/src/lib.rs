@@ -418,6 +418,62 @@ mod tests {
         assert_eq!((start, end), (100, 220));
     }
 
+    // ── Map stream support ────────────────────────────────────────────────────
+    //
+    // AFF4 images acquired with Evimetry use aff4:Map as the top-level data
+    // stream. The Map maps virtual offsets through a binary `/map` file to either
+    // an ImageStream or a symbolic target (Zero, SymbolicStreamFF). Without Map
+    // support, the reader opens the raw ImageStream and reports the wrong virtual
+    // size; reads from mapped regions return wrong data or errors.
+
+    #[test]
+    fn map_virtual_size_from_map_block_not_image_stream() {
+        // The Map turtle declares size=1024; the inner ImageStream declares size=512.
+        // virtual_disk_size() must return the Map's size (1024), not the ImageStream's (512).
+        let img = testutil::test_aff4_map(&[0u8; 512]);
+        let f = write_tmp(&img);
+        let reader = Aff4Reader::open(f.path()).expect("open map aff4");
+        assert_eq!(
+            reader.virtual_disk_size(),
+            1024,
+            "virtual_disk_size() must come from the aff4:Map block, not the ImageStream block"
+        );
+    }
+
+    #[test]
+    fn map_stream_gap_reads_zeros() {
+        // Virtual bytes 0..511 are an unmapped gap (mapGapDefaultStream = aff4:Zero).
+        // Without Map support, the reader reads ImageStream data (non-zero) instead.
+        let img = testutil::test_aff4_map(&[0xDDu8; 512]);
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open map aff4");
+        let mut buf = [0xFFu8; 512]; // pre-fill non-zero to catch false positives
+        reader.read_exact(&mut buf).expect("read gap region");
+        assert_eq!(
+            buf,
+            [0u8; 512],
+            "virtual bytes 0..511 are an unmapped gap and must read as zeros"
+        );
+    }
+
+    #[test]
+    fn map_stream_image_region_reads_correct_data() {
+        // Virtual bytes 512..1023 map to the ImageStream at target offset 0.
+        // Without Map support, the reader has virtual_size=512, so seeking to 512
+        // is past the end and read_exact returns an error.
+        let img = testutil::test_aff4_map(&[0xDDu8; 512]);
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open map aff4");
+        reader.seek(SeekFrom::Start(512)).expect("seek to mapped region");
+        let mut buf = [0u8; 512];
+        reader.read_exact(&mut buf).expect("read mapped region");
+        assert_eq!(
+            buf,
+            [0xDDu8; 512],
+            "virtual bytes 512..1023 map to the ImageStream and must return ImageStream data"
+        );
+    }
+
     // ── Property tests: open() never panics on arbitrary input ────────────────
 
     proptest::proptest! {

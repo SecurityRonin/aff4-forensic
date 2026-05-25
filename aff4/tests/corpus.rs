@@ -143,3 +143,47 @@ fn read_zip_entry(archive: &mut zip::ZipArchive<std::fs::File>, name: &str) -> V
     entry.read_to_end(&mut data).expect("read zip entry");
     data
 }
+
+// ── Map stream corpus tests ───────────────────────────────────────────────────
+//
+// Base-ExabyteSparse.aff4 and Base-Allocated.aff4 both use aff4:Map as the top-
+// level data stream. Without Map support the reader opens the inner ImageStream
+// and returns wrong virtual sizes and wrong data.
+
+/// ExabyteSparse: virtual disk size must come from the aff4:Map block (9,223,372,036,854,775,296).
+///
+/// Without Map support, the reader finds the aff4:ImageStream block instead and
+/// reports the ImageStream's physical data size (4,718,592 bytes).
+#[test]
+fn corpus_exabyte_sparse_virtual_size() {
+    let path = corpus("Base-ExabyteSparse.aff4");
+    if !path.exists() {
+        return;
+    }
+    let reader = Aff4Reader::open(&path).expect("open Base-ExabyteSparse.aff4");
+    assert_eq!(
+        reader.virtual_disk_size(),
+        9_223_372_036_854_775_296_u64,
+        "virtual_disk_size must come from aff4:Map block (size=9223372036854775296), \
+         not from the inner ImageStream block (size=4718592)"
+    );
+}
+
+/// Base-Allocated virtual disk size must come from the aff4:Map block (268,435,456 = 256 MiB),
+/// not from the inner aff4:ImageStream block (3,964,928 bytes).
+///
+/// Without Map support the reader opens the ImageStream directly and reports 3,964,928.
+#[test]
+fn corpus_base_allocated_virtual_size() {
+    let path = corpus("Base-Allocated.aff4");
+    if !path.exists() {
+        return;
+    }
+    let reader = Aff4Reader::open(&path).expect("open Base-Allocated.aff4");
+    assert_eq!(
+        reader.virtual_disk_size(),
+        268_435_456_u64,
+        "virtual_disk_size must come from aff4:Map block (268435456), \
+         not from the inner ImageStream block (3964928)"
+    );
+}
