@@ -2,15 +2,20 @@
 //!
 //! AFF4 is a ZIP-based container format with RDF/Turtle metadata. Disk images
 //! are stored as chunked "bevies" (ZIP segments). This crate supports
-//! `NullCompressor` and `DeflateCompressor` chunk compression.
+//! `NullCompressor`, `DeflateCompressor`, Snappy, and LZ4 frame compression.
+//!
+//! Images may be direct `aff4:ImageStream`s or `aff4:Map`-backed, where a Map
+//! redirects virtual addresses to ImageStream regions, Zero-fill, or SymbolicStreamFF.
 
 mod error;
+mod map;
 mod meta;
 
 #[cfg(any(test, feature = "test-helpers"))]
 pub mod testutil;
 
 pub use error::Aff4Error;
+use map::{LoadedMap, TargetKind, parse_idx, parse_map_entries, resolve};
 use meta::{Compression, parse_turtle};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -20,14 +25,19 @@ use zip::ZipArchive;
 /// A read-only AFF4 disk image reader.
 ///
 /// Implements [`Read`] and [`Seek`] over the virtual disk address space.
+/// Supports both direct `aff4:ImageStream` images and `aff4:Map`-backed images
+/// (e.g., Evimetry `Base-Allocated` and `Base-ExabyteSparse`).
 pub struct Aff4Reader {
     archive: ZipArchive<File>,
+    /// ZIP entry prefix for the `aff4:ImageStream` bevies.
     zip_base: String,
     virtual_size: u64,
     chunk_size: u64,
     chunks_per_segment: u64,
     compression: Compression,
     pos: u64,
+    /// Loaded map for Map-backed images; `None` for direct ImageStreams.
+    loaded_map: Option<LoadedMap>,
 }
 
 impl std::fmt::Debug for Aff4Reader {
@@ -43,7 +53,8 @@ impl Aff4Reader {
     /// Open an AFF4 image file.
     ///
     /// Reads `information.turtle` from the ZIP container to locate the primary
-    /// `aff4:ImageStream` and its geometry (size, chunk size, compression).
+    /// data stream (either a direct `aff4:ImageStream` or an `aff4:Map`-backed
+    /// image) and its geometry (size, chunk size, compression).
     pub fn open(path: &Path) -> Result<Self, Aff4Error> {
         let file = File::open(path)?;
         let mut archive = ZipArchive::new(file)?;
@@ -57,17 +68,40 @@ impl Aff4Reader {
 
         let meta = parse_turtle(&turtle)?;
 
-        // Detect the actual ZIP entry prefix. Real AFF4 images from Evimetry and
-        // aff4-imager URL-encode the IRI in entry names: aff4%3A%2F%2F{uuid}/…
-        // Synthetic test fixtures use the bare UUID. Try encoded form first.
-        let stripped_arn = meta.stream_arn
-            .strip_prefix("aff4://")
-            .unwrap_or(&meta.stream_arn);
-        let encoded_prefix = format!("aff4%3A%2F%2F{stripped_arn}");
-        let zip_base = if archive.file_names().any(|n| n.starts_with(&encoded_prefix)) {
-            encoded_prefix
+        // Detect ZIP entry prefix for the ImageStream.  Real Evimetry/aff4-imager
+        // images URL-encode the IRI: aff4%3A%2F%2F{uuid}/…  Synthetic fixtures
+        // use the bare UUID.
+        let zip_base = detect_zip_base(&archive, &meta.stream_arn);
+
+        // If this is a Map-backed image, load the /map and /idx entries.
+        let loaded_map = if let Some(mm) = meta.map_meta {
+            let map_zip_base = detect_zip_base(&archive, &mm.map_arn);
+
+            let map_data = {
+                let map_entry_name = format!("{map_zip_base}/map");
+                let mut entry = archive.by_name(&map_entry_name)?;
+                let mut data = Vec::new();
+                entry.read_to_end(&mut data)?;
+                data
+            };
+            let idx_data = {
+                let idx_entry_name = format!("{map_zip_base}/idx");
+                let mut entry = archive.by_name(&idx_entry_name)?;
+                let mut content = String::new();
+                entry.read_to_string(&mut content)?;
+                content
+            };
+
+            let entries = parse_map_entries(&map_data);
+            let targets = parse_idx(&idx_data, &mm.image_stream_arn);
+            let gap_default = if mm.gap_is_symbolic_ff {
+                TargetKind::SymbolicFF
+            } else {
+                TargetKind::Zero
+            };
+            Some(LoadedMap { entries, targets, gap_default })
         } else {
-            stripped_arn.to_string()
+            None
         };
 
         Ok(Self {
@@ -78,10 +112,14 @@ impl Aff4Reader {
             chunks_per_segment: meta.chunks_per_segment,
             compression: meta.compression,
             pos: 0,
+            loaded_map,
         })
     }
 
-    /// Virtual disk size in bytes (as declared in `aff4:size`).
+    /// Virtual disk size in bytes.
+    ///
+    /// For Map-backed images this is the Map's declared size, not the inner
+    /// ImageStream's physical data size.
     pub fn virtual_disk_size(&self) -> u64 {
         self.virtual_size
     }
@@ -147,6 +185,20 @@ impl Aff4Reader {
     }
 }
 
+/// Detect the ZIP entry prefix for an AFF4 ARN.
+///
+/// Evimetry / aff4-imager URL-encode the IRI: `aff4%3A%2F%2F{uuid}/…`
+/// Synthetic test fixtures use the bare path after stripping `aff4://`.
+fn detect_zip_base(archive: &ZipArchive<File>, arn: &str) -> String {
+    let stripped = arn.strip_prefix("aff4://").unwrap_or(arn);
+    let encoded = format!("aff4%3A%2F%2F{stripped}");
+    if archive.file_names().any(|n| n.starts_with(&encoded)) {
+        encoded
+    } else {
+        stripped.to_string()
+    }
+}
+
 impl Read for Aff4Reader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if buf.is_empty() || self.pos >= self.virtual_size {
@@ -156,23 +208,50 @@ impl Read for Aff4Reader {
         let remaining = (self.virtual_size - self.pos) as usize;
         let to_read = buf.len().min(remaining);
 
-        let chunk_idx = self.pos / self.chunk_size;
-        let offset_in_chunk = (self.pos % self.chunk_size) as usize;
+        // Resolve the current position through the Map (if present).
+        // All values are Copy so the immutable borrow on `self.loaded_map` ends here.
+        let (target_kind, target_offset, bytes_in_region) =
+            if let Some(ref lm) = self.loaded_map {
+                let r = resolve(lm, self.pos, self.virtual_size);
+                (r.kind, r.target_offset, r.bytes_in_region)
+            } else {
+                (TargetKind::ImageStream, self.pos, u64::MAX)
+            };
 
-        let chunk = self
-            .read_chunk(chunk_idx)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        match target_kind {
+            TargetKind::Zero | TargetKind::Unknown => {
+                let n = to_read.min(bytes_in_region as usize);
+                buf[..n].fill(0);
+                self.pos += n as u64;
+                Ok(n)
+            }
+            TargetKind::SymbolicFF => {
+                let n = to_read.min(bytes_in_region as usize);
+                buf[..n].fill(0xFF);
+                self.pos += n as u64;
+                Ok(n)
+            }
+            TargetKind::ImageStream => {
+                let region_limit = bytes_in_region as usize;
+                let chunk_idx = target_offset / self.chunk_size;
+                let offset_in_chunk = (target_offset % self.chunk_size) as usize;
 
-        let available = chunk.len().saturating_sub(offset_in_chunk);
-        let n = to_read.min(available);
+                let chunk = self
+                    .read_chunk(chunk_idx)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        if n == 0 {
-            return Ok(0);
+                let available = chunk.len().saturating_sub(offset_in_chunk).min(region_limit);
+                let n = to_read.min(available);
+
+                if n == 0 {
+                    return Ok(0);
+                }
+
+                buf[..n].copy_from_slice(&chunk[offset_in_chunk..offset_in_chunk + n]);
+                self.pos += n as u64;
+                Ok(n)
+            }
         }
-
-        buf[..n].copy_from_slice(&chunk[offset_in_chunk..offset_in_chunk + n]);
-        self.pos += n as u64;
-        Ok(n)
     }
 }
 

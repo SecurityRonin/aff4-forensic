@@ -17,8 +17,12 @@ fn corpus(name: &str) -> std::path::PathBuf {
         .join(name)
 }
 
-/// Open Base-Linear.aff4 and verify the virtual disk size matches the turtle metadata.
-/// This passes even without chunk reads (metadata-only path).
+/// Open Base-Linear.aff4 and verify the virtual disk size matches the Map's declared size.
+///
+/// All Evimetry reference images use `aff4:Map` as the top-level data stream.
+/// The Map declares `aff4:size 268435456` (256 MiB — the actual virtual disk size).
+/// The inner `aff4:ImageStream` declares `aff4:size 3964928` (physical data size).
+/// `virtual_disk_size()` must return the Map's size.
 #[test]
 fn corpus_base_linear_virtual_disk_size() {
     let path = corpus("Base-Linear.aff4");
@@ -26,11 +30,10 @@ fn corpus_base_linear_virtual_disk_size() {
         return;
     }
     let reader = Aff4Reader::open(&path).expect("open Base-Linear.aff4");
-    // aff4:size in information.turtle for the ImageStream is 3,964,928 bytes.
     assert_eq!(
         reader.virtual_disk_size(),
-        3_964_928,
-        "virtual_disk_size must match aff4:size from turtle"
+        268_435_456_u64,
+        "virtual_disk_size must come from the aff4:Map block (268435456 = 256 MiB)"
     );
 }
 
@@ -61,7 +64,10 @@ fn corpus_base_linear_sector0_reads_ok() {
 /// Read a Snappy-compressed chunk from Base-Linear.aff4 and verify bytes match
 /// the reference: direct ZIP extraction + Snappy decompression using the snap crate.
 ///
-/// Chunk 2 (virtual offset 65536) is the first non-sparse chunk.
+/// Base-Linear uses an aff4:Map. The first two virtual chunks (0–65535) are sparse
+/// (Zero targets). Virtual offset 98304 is the first Map entry that targets the
+/// ImageStream, specifically ImageStream offset 65536 (chunk 2 = the first real data).
+/// The reference helper reads ImageStream chunk 2 at ImageStream offset 65536 directly.
 #[test]
 fn corpus_base_linear_snappy_chunk_matches_reference() {
     let path = corpus("Base-Linear.aff4");
@@ -69,20 +75,21 @@ fn corpus_base_linear_snappy_chunk_matches_reference() {
         return;
     }
 
-    // Compute reference bytes: extract chunk 2 directly from ZIP + snap-decompress.
+    // Reference: extract ImageStream chunk 2 (at ImageStream offset 65536) directly.
     let reference = reference_bytes_via_zip_snap(&path, 65536, 512);
 
     let mut reader = Aff4Reader::open(&path).expect("open");
-    reader.seek(SeekFrom::Start(65536)).expect("seek to chunk 2");
+    // Virtual offset 98304 maps via the Map to ImageStream offset 65536 (chunk 2).
+    reader.seek(SeekFrom::Start(98304)).expect("seek to first non-sparse virtual region");
     let mut buf = vec![0u8; 512];
     reader
         .read_exact(&mut buf)
-        .expect("chunk 2 (first Snappy chunk) must be readable");
+        .expect("first non-sparse Snappy chunk must be readable");
 
     assert_eq!(
         &buf,
         &reference[..],
-        "bytes at offset 65536 must match Snappy-decompressed ZIP reference"
+        "bytes at virtual offset 98304 must match Snappy-decompressed ImageStream chunk 2"
     );
 }
 
