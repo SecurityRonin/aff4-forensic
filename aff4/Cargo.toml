@@ -5,6 +5,7 @@ edition      = "2021"
 rust-version = "1.85"
 description  = "Pure-Rust read-only AFF4 (Advanced Forensic Format 4) disk image reader"
 license      = "MIT"
+exclude     = ["tests/data/", "corpus/", "fuzz/", ".github/", "deny.toml", "renovate.json", ".pre-commit-config.yaml"]
 authors      = ["Albert Hui"]
 keywords     = ["forensics", "aff4", "disk-image", "container"]
 categories   = ["parser-implementations", "filesystem"]
