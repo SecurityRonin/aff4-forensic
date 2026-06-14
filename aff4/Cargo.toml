@@ -1,12 +1,12 @@
 [package]
 name         = "aff4"
-version      = "0.1.0"
-edition      = "2021"
-rust-version = "1.85"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description  = "Pure-Rust read-only AFF4 (Advanced Forensic Format 4) disk image reader"
-license      = "MIT"
+license.workspace = true
 exclude     = ["tests/data/", "corpus/", "fuzz/", ".github/", "deny.toml", "renovate.json", ".pre-commit-config.yaml"]
-authors      = ["Albert Hui"]
+authors.workspace = true
 keywords     = ["forensics", "aff4", "disk-image", "container"]
 categories   = ["parser-implementations", "filesystem"]
 
@@ -14,16 +14,16 @@ categories   = ["parser-implementations", "filesystem"]
 test-helpers = []
 
 [dependencies]
-thiserror = "2"
-zip       = "2"
-flate2    = "1"
-snap      = "1"
-lz4_flex  = "0.11"
+thiserror = { workspace = true }
+zip       = { workspace = true }
+flate2    = { workspace = true }
+snap      = { workspace = true }
+lz4_flex  = { workspace = true }
 
 [dev-dependencies]
-tempfile  = "3"
-proptest  = "1"
-lz4_flex  = "0.11"
+tempfile  = { workspace = true }
+proptest  = { workspace = true }
+lz4_flex  = { workspace = true }
 
 [lints.rust]
 unsafe_code = "deny"
