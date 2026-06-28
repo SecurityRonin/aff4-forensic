@@ -15,12 +15,20 @@ mod meta;
 pub mod testutil;
 
 pub use error::Aff4Error;
-use map::{LoadedMap, TargetKind, parse_idx, parse_map_entries, resolve};
-use meta::{Compression, parse_turtle};
+use map::{parse_idx, parse_map_entries, resolve, LoadedMap, TargetKind};
+use meta::{parse_turtle, Compression};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use zip::ZipArchive;
+
+/// A seekable, thread-safe byte source the AFF4 container ZIP can sit on: a
+/// `File`, an in-RAM `Cursor`, or a positioned sub-range of an outer `.zip`.
+/// Lets a caller open an AFF4 image straight from a byte source (no temp-file
+/// extraction) via [`Aff4Reader::open_reader`], while [`Aff4Reader::open`] keeps
+/// the file-path convenience.
+pub trait ReadSeekSend: Read + Seek + Send + Sync {}
+impl<T: Read + Seek + Send + Sync> ReadSeekSend for T {}
 
 /// A read-only AFF4 disk image reader.
 ///
@@ -99,7 +107,11 @@ impl Aff4Reader {
             } else {
                 TargetKind::Zero
             };
-            Some(LoadedMap { entries, targets, gap_default })
+            Some(LoadedMap {
+                entries,
+                targets,
+                gap_default,
+            })
         } else {
             None
         };
@@ -114,6 +126,16 @@ impl Aff4Reader {
             pos: 0,
             loaded_map,
         })
+    }
+
+    /// Open an AFF4 image from any seekable byte source (a `Cursor` over the
+    /// container bytes, a positioned sub-range of an outer `.zip`, …) rather than
+    /// a file path — so an AFF4 container stored inside an archive can be read
+    /// without extracting it to a temp file first.
+    pub fn open_reader(backing: Box<dyn ReadSeekSend>) -> Result<Self, Aff4Error> {
+        // RED stub — GREEN replaces this with the shared turtle/map parse.
+        let _ = backing;
+        Err(Aff4Error::BadFormat("open_reader not implemented".into()))
     }
 
     /// Virtual disk size in bytes.
@@ -210,13 +232,12 @@ impl Read for Aff4Reader {
 
         // Resolve the current position through the Map (if present).
         // All values are Copy so the immutable borrow on `self.loaded_map` ends here.
-        let (target_kind, target_offset, bytes_in_region) =
-            if let Some(ref lm) = self.loaded_map {
-                let r = resolve(lm, self.pos, self.virtual_size);
-                (r.kind, r.target_offset, r.bytes_in_region)
-            } else {
-                (TargetKind::ImageStream, self.pos, u64::MAX)
-            };
+        let (target_kind, target_offset, bytes_in_region) = if let Some(ref lm) = self.loaded_map {
+            let r = resolve(lm, self.pos, self.virtual_size);
+            (r.kind, r.target_offset, r.bytes_in_region)
+        } else {
+            (TargetKind::ImageStream, self.pos, u64::MAX)
+        };
 
         match target_kind {
             TargetKind::Zero | TargetKind::Unknown => {
@@ -240,7 +261,10 @@ impl Read for Aff4Reader {
                     .read_chunk(chunk_idx)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-                let available = chunk.len().saturating_sub(offset_in_chunk).min(region_limit);
+                let available = chunk
+                    .len()
+                    .saturating_sub(offset_in_chunk)
+                    .min(region_limit);
                 let n = to_read.min(available);
 
                 if n == 0 {
@@ -435,6 +459,33 @@ mod tests {
     }
 
     #[test]
+    fn open_reader_over_cursor_matches_open_path() {
+        let mut sector = [0u8; 512];
+        sector[10] = 0xCA;
+        sector[11] = 0xFE;
+        let img = testutil::test_aff4(&sector);
+
+        // Oracle: open(path) and read the whole virtual disk.
+        let tmp = write_tmp(&img);
+        let mut via_path = Aff4Reader::open(tmp.path()).expect("open path");
+        let mut want = Vec::new();
+        via_path.read_to_end(&mut want).expect("read path");
+
+        // Under test: open_reader over an in-RAM Cursor of the SAME bytes — the
+        // zip-direct backing path.
+        let mut via_reader =
+            Aff4Reader::open_reader(Box::new(Cursor::new(img.clone()))).expect("open_reader");
+        let mut got = Vec::new();
+        via_reader.read_to_end(&mut got).expect("read reader");
+
+        assert_eq!(
+            got, want,
+            "open_reader must read byte-identically to open(path)"
+        );
+        assert_eq!(via_reader.virtual_disk_size(), via_path.virtual_disk_size());
+    }
+
+    #[test]
     fn read_returns_correct_bytes() {
         let mut data = [0u8; 512];
         data[10] = 0xCA;
@@ -529,8 +580,7 @@ mod tests {
         let mut buf = [0xFFu8; 512]; // pre-fill non-zero to catch false positives
         reader.read_exact(&mut buf).expect("read gap region");
         assert_eq!(
-            buf,
-            [0u8; 512],
+            buf, [0u8; 512],
             "virtual bytes 0..511 are an unmapped gap and must read as zeros"
         );
     }
@@ -543,12 +593,13 @@ mod tests {
         let img = testutil::test_aff4_map(&[0xDDu8; 512]);
         let f = write_tmp(&img);
         let mut reader = Aff4Reader::open(f.path()).expect("open map aff4");
-        reader.seek(SeekFrom::Start(512)).expect("seek to mapped region");
+        reader
+            .seek(SeekFrom::Start(512))
+            .expect("seek to mapped region");
         let mut buf = [0u8; 512];
         reader.read_exact(&mut buf).expect("read mapped region");
         assert_eq!(
-            buf,
-            [0xDDu8; 512],
+            buf, [0xDDu8; 512],
             "virtual bytes 512..1023 map to the ImageStream and must return ImageStream data"
         );
     }
