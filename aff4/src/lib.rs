@@ -36,7 +36,7 @@ impl<T: Read + Seek + Send + Sync> ReadSeekSend for T {}
 /// Supports both direct `aff4:ImageStream` images and `aff4:Map`-backed images
 /// (e.g., Evimetry `Base-Allocated` and `Base-ExabyteSparse`).
 pub struct Aff4Reader {
-    archive: ZipArchive<File>,
+    archive: ZipArchive<Box<dyn ReadSeekSend>>,
     /// ZIP entry prefix for the `aff4:ImageStream` bevies.
     zip_base: String,
     virtual_size: u64,
@@ -60,12 +60,24 @@ impl std::fmt::Debug for Aff4Reader {
 impl Aff4Reader {
     /// Open an AFF4 image file.
     ///
+    /// Open an AFF4 image from a file path. See [`Self::open_reader`] for the
+    /// byte-source variant (read straight from an outer `.zip`, etc.).
+    ///
+    /// # Errors
+    /// [`Aff4Error`] if the file cannot be opened or is not a valid AFF4 image.
+    pub fn open(path: &Path) -> Result<Self, Aff4Error> {
+        Self::open_reader(Box::new(File::open(path)?))
+    }
+
     /// Reads `information.turtle` from the ZIP container to locate the primary
     /// data stream (either a direct `aff4:ImageStream` or an `aff4:Map`-backed
     /// image) and its geometry (size, chunk size, compression).
-    pub fn open(path: &Path) -> Result<Self, Aff4Error> {
-        let file = File::open(path)?;
-        let mut archive = ZipArchive::new(file)?;
+    ///
+    /// # Errors
+    /// [`Aff4Error`] if `backing` is not a valid AFF4 container or its metadata
+    /// cannot be parsed.
+    pub fn open_reader(backing: Box<dyn ReadSeekSend>) -> Result<Self, Aff4Error> {
+        let mut archive = ZipArchive::new(backing)?;
 
         let turtle = {
             let mut entry = archive.by_name("information.turtle")?;
@@ -126,16 +138,6 @@ impl Aff4Reader {
             pos: 0,
             loaded_map,
         })
-    }
-
-    /// Open an AFF4 image from any seekable byte source (a `Cursor` over the
-    /// container bytes, a positioned sub-range of an outer `.zip`, …) rather than
-    /// a file path — so an AFF4 container stored inside an archive can be read
-    /// without extracting it to a temp file first.
-    pub fn open_reader(backing: Box<dyn ReadSeekSend>) -> Result<Self, Aff4Error> {
-        // RED stub — GREEN replaces this with the shared turtle/map parse.
-        let _ = backing;
-        Err(Aff4Error::BadFormat("open_reader not implemented".into()))
     }
 
     /// Virtual disk size in bytes.
@@ -211,7 +213,7 @@ impl Aff4Reader {
 ///
 /// Evimetry / aff4-imager URL-encode the IRI: `aff4%3A%2F%2F{uuid}/…`
 /// Synthetic test fixtures use the bare path after stripping `aff4://`.
-fn detect_zip_base(archive: &ZipArchive<File>, arn: &str) -> String {
+fn detect_zip_base(archive: &ZipArchive<Box<dyn ReadSeekSend>>, arn: &str) -> String {
     let stripped = arn.strip_prefix("aff4://").unwrap_or(arn);
     let encoded = format!("aff4%3A%2F%2F{stripped}");
     if archive.file_names().any(|n| n.starts_with(&encoded)) {
