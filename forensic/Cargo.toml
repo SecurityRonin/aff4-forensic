@@ -29,6 +29,8 @@ blake2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Rewriting a reference image (flip one content byte) to drive the tamper test.
+zip = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"
