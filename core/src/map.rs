@@ -25,15 +25,47 @@ pub(crate) struct MapEntry {
     pub target_id: u32,
 }
 
+/// The repeating ASCII tile of a multi-byte symbolic stream.
+///
+/// pyaff4 builds a tile of the seed repeated to exactly 1 MiB and reads
+/// `tile[readptr % 1_MiB]`; because 1 MiB is not a multiple of the seed length,
+/// the pattern resets (a "seam") at every 1 MiB boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tile {
+    /// `aff4:UnknownData` — region present in the address space but not imaged.
+    Unknown,
+    /// `aff4:UnreadableData` — region that could not be read during acquisition.
+    Unreadable,
+}
+
+impl Tile {
+    /// The ASCII seed repeated across the 1 MiB tile.
+    pub(crate) fn seed(self) -> &'static [u8] {
+        match self {
+            Tile::Unknown => b"UNKNOWN",
+            Tile::Unreadable => b"UNREADABLEDATA",
+        }
+    }
+
+    /// Byte produced at target-stream position `p`, honoring pyaff4's 1 MiB tile
+    /// reset: `seed[(p % 1_MiB) % seed.len()]`.
+    pub(crate) fn byte_at(self, p: u64) -> u8 {
+        const TILE: u64 = 1024 * 1024;
+        let seed = self.seed();
+        seed[((p % TILE) % seed.len() as u64) as usize]
+    }
+}
+
 /// What kind of data a map target produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TargetKind {
     /// A real `aff4:ImageStream` — read from the bevy chunks.
     ImageStream,
-    /// `aff4:Zero` — produce zeros.
-    Zero,
-    /// `aff4:SymbolicStreamFF` — produce 0xFF bytes.
-    SymbolicFF,
+    /// A constant-byte symbolic stream: `aff4:Zero` (0x00),
+    /// `aff4:SymbolicStreamFF` (0xFF), `aff4:SymbolicStream{XX}` (0xXX).
+    Fill(u8),
+    /// A repeating-tile symbolic stream (`UnknownData` / `UnreadableData`).
+    Tile(Tile),
     /// Unrecognised or unmapped target — produce zeros (best effort).
     Unknown,
 }
@@ -73,22 +105,38 @@ pub(crate) fn parse_map_entries(data: &[u8]) -> Vec<MapEntry> {
 pub(crate) fn parse_idx(data: &str, image_stream_arn: &str) -> Vec<TargetKind> {
     data.lines()
         .filter(|l| !l.trim().is_empty())
-        .map(|line| {
-            let s = line.trim();
-            if s.ends_with("#Zero") || s == "aff4:Zero" {
-                TargetKind::Zero
-            } else if s.ends_with("#SymbolicStreamFF") {
-                TargetKind::SymbolicFF
-            } else if s == image_stream_arn {
-                TargetKind::ImageStream
-            } else if s.starts_with("aff4://") {
-                // Unknown aff4:// stream — treat as zeros.
-                TargetKind::Unknown
-            } else {
-                TargetKind::Unknown
-            }
-        })
+        .map(|line| classify_target(line.trim(), image_stream_arn))
         .collect()
+}
+
+/// Classify one `/idx` target URI into the kind of data it produces.
+fn classify_target(s: &str, image_stream_arn: &str) -> TargetKind {
+    if s == image_stream_arn {
+        TargetKind::ImageStream
+    } else if s.ends_with("#Zero") || s == "aff4:Zero" {
+        TargetKind::Fill(0x00)
+    } else if s.ends_with("#UnknownData") {
+        TargetKind::Tile(Tile::Unknown)
+    } else if s.ends_with("#UnreadableData") {
+        TargetKind::Tile(Tile::Unreadable)
+    } else if let Some(byte) = symbolic_stream_byte(s) {
+        TargetKind::Fill(byte)
+    } else {
+        TargetKind::Unknown
+    }
+}
+
+/// Extract the constant fill byte of a `SymbolicStream{XX}` target, where `XX`
+/// is two hex digits. Handles the AFF4 Standard form
+/// (`…#SymbolicStreamFF`) and the afflib-2012 form (`…/SymbolicStream#FF`).
+fn symbolic_stream_byte(s: &str) -> Option<u8> {
+    let after = s.split("SymbolicStream").nth(1)?;
+    let hex = after.strip_prefix('#').unwrap_or(after);
+    if hex.len() == 2 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        u8::from_str_radix(hex, 16).ok()
+    } else {
+        None
+    }
 }
 
 /// The resolved result of a virtual-offset lookup.

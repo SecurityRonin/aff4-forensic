@@ -134,9 +134,9 @@ impl Aff4Reader {
             let entries = parse_map_entries(&map_data);
             let targets = parse_idx(&idx_data, &mm.image_stream_arn);
             let gap_default = if mm.gap_is_symbolic_ff {
-                TargetKind::SymbolicFF
+                TargetKind::Fill(0xFF)
             } else {
-                TargetKind::Zero
+                TargetKind::Fill(0x00)
             };
             Some(LoadedMap {
                 entries,
@@ -316,15 +316,23 @@ impl Read for Aff4Reader {
         };
 
         match target_kind {
-            TargetKind::Zero | TargetKind::Unknown => {
+            TargetKind::Unknown => {
                 let n = to_read.min(bytes_in_region as usize);
                 buf[..n].fill(0);
                 self.pos += n as u64;
                 Ok(n)
             }
-            TargetKind::SymbolicFF => {
+            TargetKind::Fill(byte) => {
                 let n = to_read.min(bytes_in_region as usize);
-                buf[..n].fill(0xFF);
+                buf[..n].fill(byte);
+                self.pos += n as u64;
+                Ok(n)
+            }
+            TargetKind::Tile(tile) => {
+                let n = to_read.min(bytes_in_region as usize);
+                for (i, slot) in buf[..n].iter_mut().enumerate() {
+                    *slot = tile.byte_at(target_offset + i as u64);
+                }
                 self.pos += n as u64;
                 Ok(n)
             }
