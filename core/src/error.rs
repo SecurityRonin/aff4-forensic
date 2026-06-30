@@ -9,4 +9,8 @@ pub enum Aff4Error {
     Zip(#[from] zip_core::ZipCoreError),
     #[error("not a valid AFF4 image: {0}")]
     BadFormat(String),
+    /// The image (or a stream within it) is encrypted; decryption is unsupported,
+    /// so the reader refuses rather than emit plausible-but-wrong plaintext.
+    #[error("encrypted AFF4 stream is not supported: {0}")]
+    Encrypted(String),
 }

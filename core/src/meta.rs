@@ -50,10 +50,11 @@ pub(crate) struct StreamMeta {
 /// When an `aff4:Map` block is present, extracts the Map's virtual size and the
 /// dependent `aff4:ImageStream`'s chunk geometry. Without a Map block, falls back
 /// to the first `aff4:ImageStream` block (direct image).
-pub(crate) fn parse_turtle(turtle: &str) -> Result<StreamMeta, Aff4Error> {
-    // Normalize: collapse whitespace variants and `;` so every predicate-object
-    // pair is whitespace-separated with blocks delimited by " . ".
-    let normalized: String = turtle
+/// Normalize a turtle document: collapse `\n\r\t` and `;` to spaces so each
+/// predicate-object pair is whitespace-separated and RDF nodes are delimited by
+/// `" . "`.
+fn normalize_turtle(turtle: &str) -> String {
+    turtle
         .chars()
         .map(|c| {
             if matches!(c, '\n' | '\r' | '\t' | ';') {
@@ -62,9 +63,24 @@ pub(crate) fn parse_turtle(turtle: &str) -> Result<StreamMeta, Aff4Error> {
                 c
             }
         })
-        .collect();
+        .collect()
+}
+
+pub(crate) fn parse_turtle(turtle: &str) -> Result<StreamMeta, Aff4Error> {
+    let normalized = normalize_turtle(turtle);
 
     let blocks: Vec<&str> = normalized.split(" . ").collect();
+
+    // Encrypted volumes (aff4:EncryptedStream, AES-XTS, wrapped keybag): detect
+    // and refuse loudly. Decryption is a later epic; emitting the ciphertext as
+    // if it were plaintext would fabricate evidence.
+    if let Some(block) = blocks.iter().find(|b| b.contains("aff4:EncryptedStream")) {
+        let arn = extract_iri(block).unwrap_or_else(|| "<unknown stream>".into());
+        return Err(Aff4Error::Encrypted(format!(
+            "stream {arn} is an aff4:EncryptedStream (AES-XTS); provide-key decryption \
+             is not yet implemented"
+        )));
+    }
 
     // Try to find an aff4:Map block first.
     if let Some(map_block) = blocks.iter().find(|b| b.contains("aff4:Map")) {
@@ -196,10 +212,74 @@ fn parse_hash_term(token: &str) -> Option<crate::StoredHash> {
     if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
+    // A datatype token may carry a trailing `,` (more values follow) when the
+    // serializer wrote no space before it — e.g. pyaff4's `…"^^aff4:MD5,`. Keep
+    // only the alphanumeric datatype name.
+    let algorithm = dtype
+        .trim_end_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_string();
+    if algorithm.is_empty() {
+        return None;
+    }
     Some(crate::StoredHash {
-        algorithm: dtype.to_string(),
+        algorithm,
         hex: hex.to_ascii_lowercase(),
     })
+}
+
+/// Parsed metadata for one AFF4-Logical `aff4:FileImage` node.
+pub(crate) struct LogicalFileMeta {
+    /// The FileImage node IRI (its path tail names the ZIP segment).
+    pub arn: String,
+    /// `aff4:originalFileName`.
+    pub original_file_name: String,
+    /// `aff4:size` — content length in bytes.
+    pub size: u64,
+    /// Content digests declared on the node (`aff4:hash`).
+    pub hashes: Vec<crate::StoredHash>,
+    /// `aff4:lastWritten`, if present.
+    pub last_written: Option<String>,
+}
+
+/// Parse all `aff4:FileImage` nodes from an AFF4-Logical `information.turtle`.
+///
+/// Returns one entry per logical file. Empty when the container declares no
+/// FileImage nodes (e.g. a disk image).
+pub(crate) fn parse_logical_files(turtle: &str) -> Result<Vec<LogicalFileMeta>, Aff4Error> {
+    let normalized = normalize_turtle(turtle);
+    let mut out = Vec::new();
+    for block in normalized.split(" . ") {
+        if !block.contains("aff4:FileImage") {
+            continue;
+        }
+        let arn = extract_iri(block)
+            .ok_or_else(|| Aff4Error::BadFormat("FileImage node has no IRI subject".into()))?;
+        let size = extract_pred_u64(block, "aff4:size")?;
+        let original_file_name =
+            extract_pred_quoted(block, "aff4:originalFileName").unwrap_or_else(|| arn.clone());
+        let hashes = parse_image_hashes(block);
+        let last_written = extract_pred_quoted(block, "aff4:lastWritten");
+        out.push(LogicalFileMeta {
+            arn,
+            original_file_name,
+            size,
+            hashes,
+            last_written,
+        });
+    }
+    Ok(out)
+}
+
+/// Extract the first quoted string value following `predicate`, handling values
+/// that contain spaces or unicode (e.g. a filename). Returns the bytes between
+/// the first `"` after the predicate and its closing `"` (excluding any `^^`
+/// datatype suffix).
+fn extract_pred_quoted(block: &str, predicate: &str) -> Option<String> {
+    let after_pred = &block[block.find(predicate)? + predicate.len()..];
+    let open = after_pred.find('"')? + 1;
+    let rest = &after_pred[open..];
+    let close = rest.find('"')?;
+    Some(rest[..close].to_string())
 }
 
 fn detect_compression(block: &str) -> Compression {

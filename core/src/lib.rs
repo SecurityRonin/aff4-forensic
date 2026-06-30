@@ -8,6 +8,7 @@
 //! redirects virtual addresses to ImageStream regions, Zero-fill, or SymbolicStreamFF.
 
 mod error;
+mod logical;
 mod map;
 mod meta;
 
@@ -15,6 +16,7 @@ mod meta;
 pub mod testutil;
 
 pub use error::Aff4Error;
+pub use logical::{LogicalContainer, LogicalEntry};
 use map::{parse_idx, parse_map_entries, resolve, LoadedMap, TargetKind};
 use meta::{parse_turtle, Compression};
 use std::fs::File;
