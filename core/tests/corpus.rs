@@ -37,27 +37,33 @@ fn corpus_base_linear_virtual_disk_size() {
     );
 }
 
-/// Read sector 0 from Base-Linear.aff4.
+/// Read sector 0 from Base-Linear.aff4 — it is a real MBR, not zeros.
 ///
-/// Chunks 0 and 1 are sparse (0-byte index entries), so virtual bytes 0–65535
-/// should read as zeros. Currently fails due to:
-/// 1. URL-encoded ZIP entry name not found
-/// 2. Sparse chunk returning empty Vec instead of chunk_size zeros
-/// 3. Snappy compression not supported
+/// External ground truth: the Map routes virtual offset 0 → ImageStream offset 0
+/// (map entry `map_off=0, len=32768, tgt_off=0, tgt_id=0`), and ImageStream chunk 0
+/// decompresses to a 512-byte MBR ending in the boot signature `0x55 0xAA` at
+/// offset 510. A reader that mis-parses the bevy index treats chunk 0 as sparse
+/// and returns all zeros — this test catches that.
 #[test]
-fn corpus_base_linear_sector0_reads_ok() {
+fn corpus_base_linear_sector0_is_mbr() {
     let path = corpus("Base-Linear.aff4");
     if !path.exists() {
         return;
     }
     let mut reader = Aff4Reader::open(&path).expect("open");
     let mut buf = [0u8; 512];
-    reader.read_exact(&mut buf).expect("sector 0 must be readable");
-    // Chunks 0 and 1 are sparse — sector 0 must be all zeros.
+    reader
+        .read_exact(&mut buf)
+        .expect("sector 0 must be readable");
     assert_eq!(
-        buf,
-        [0u8; 512],
-        "sparse region (chunks 0-1) must read as zeros"
+        (buf[510], buf[511]),
+        (0x55, 0xAA),
+        "virtual sector 0 maps to ImageStream chunk 0 (a real MBR); the boot \
+         signature 0x55AA must appear at offset 510, not zeros"
+    );
+    assert_ne!(
+        buf, [0u8; 512],
+        "sector 0 is an MBR, not a sparse zero region"
     );
 }
 
@@ -80,7 +86,9 @@ fn corpus_base_linear_snappy_chunk_matches_reference() {
 
     let mut reader = Aff4Reader::open(&path).expect("open");
     // Virtual offset 98304 maps via the Map to ImageStream offset 65536 (chunk 2).
-    reader.seek(SeekFrom::Start(98304)).expect("seek to first non-sparse virtual region");
+    reader
+        .seek(SeekFrom::Start(98304))
+        .expect("seek to first non-sparse virtual region");
     let mut buf = vec![0u8; 512];
     reader
         .read_exact(&mut buf)
@@ -120,20 +128,15 @@ fn reference_bytes_via_zip_snap(path: &Path, offset: u64, len: usize) -> Vec<u8>
     let chunk_idx = (offset as usize) / chunk_size;
     let offset_in_chunk = (offset as usize) % chunk_size;
 
-    let entry_size = 4usize;
-    let end =
-        u32::from_le_bytes(index_bytes[chunk_idx * entry_size..(chunk_idx + 1) * entry_size]
-            .try_into()
-            .unwrap()) as usize;
-    let start = if chunk_idx == 0 {
-        0
-    } else {
-        u32::from_le_bytes(
-            index_bytes[(chunk_idx - 1) * entry_size..chunk_idx * entry_size]
-                .try_into()
-                .unwrap(),
-        ) as usize
-    };
+    // AFF4 Standard v1.0 bevy index: 12-byte entries `(u64 byte_offset, u32 length)`
+    // per chunk — the chunk's position and compressed size within the bevy segment.
+    // (Verified by reproducing Evimetry's stored aff4:hash MD5/SHA1/SHA256/SHA512
+    // over the reconstructed ImageStream content.)
+    let entry_size = 12usize;
+    let base = chunk_idx * entry_size;
+    let start = u64::from_le_bytes(index_bytes[base..base + 8].try_into().unwrap()) as usize;
+    let length = u32::from_le_bytes(index_bytes[base + 8..base + 12].try_into().unwrap()) as usize;
+    let end = start + length;
 
     let compressed = &bevy_bytes[start..end];
     let mut dec = snap::raw::Decoder::new();
