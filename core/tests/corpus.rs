@@ -1,12 +1,13 @@
-/// Corpus integration tests for real AFF4 reference images.
-///
-/// All five images are from https://github.com/aff4/ReferenceImages —
-/// produced by Evimetry 3.0, the reference implementation of the AFF4 Standard v1.0.
-///
-/// These tests verify that our reader correctly handles:
-/// - URL-encoded ZIP entry names (`aff4%3A%2F%2F{uuid}/00000000`)
-/// - Snappy-compressed chunks (all reference images use Snappy)
-/// - Sparse chunks (index entries with 0 bytes = virtual zeros)
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+//! Corpus integration tests for real AFF4 reference images.
+//!
+//! All five images are from <https://github.com/aff4/ReferenceImages> —
+//! produced by Evimetry 3.0, the reference implementation of the AFF4 Standard v1.0.
+//!
+//! These tests verify that our reader correctly handles:
+//! - URL-encoded ZIP entry names (`aff4%3A%2F%2F{uuid}/00000000`)
+//! - Snappy-compressed chunks (all reference images use Snappy)
+//! - Sparse chunks (index entries with 0 bytes = virtual zeros)
 use aff4::Aff4Reader;
 use md5::Digest as _;
 use std::io::{Read, Seek, SeekFrom};
@@ -116,11 +117,10 @@ fn reference_bytes_via_zip_snap(path: &Path, offset: u64, len: usize) -> Vec<u8>
     let segment0_suffix = format!("/{:08x}", 0u32);
     let bevy_name = archive
         .file_names()
-        .filter(|n| n.ends_with(&segment0_suffix) && !n.contains('.'))
-        .next()
+        .find(|n| n.ends_with(&segment0_suffix) && !n.contains('.'))
         .expect("no segment 0 bevy found")
         .to_string();
-    let index_name = format!("{}.index", bevy_name);
+    let index_name = format!("{bevy_name}.index");
 
     let index_bytes = read_zip_entry(&mut archive, &index_name);
     let bevy_bytes = read_zip_entry(&mut archive, &bevy_name);

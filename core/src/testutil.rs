@@ -194,20 +194,20 @@ pub fn test_aff4_map(data: &[u8]) -> Vec<u8> {
         .expect("start turtle");
     zw.write_all(turtle.as_bytes()).expect("write turtle");
 
-    zw.start_file(&format!("{IMAGE_ZIP_BASE}/00000000"), opts)
+    zw.start_file(format!("{IMAGE_ZIP_BASE}/00000000").as_str(), opts)
         .expect("start bevy");
     zw.write_all(&chunk).expect("write bevy");
 
-    zw.start_file(&format!("{IMAGE_ZIP_BASE}/00000000.index"), opts)
+    zw.start_file(format!("{IMAGE_ZIP_BASE}/00000000.index").as_str(), opts)
         .expect("start index");
     zw.write_all(&index_entry(0, CHUNK_SIZE as u32))
         .expect("write index");
 
-    zw.start_file(&format!("{MAP_ZIP_BASE}/map"), opts)
+    zw.start_file(format!("{MAP_ZIP_BASE}/map").as_str(), opts)
         .expect("start map");
     zw.write_all(&map_bin).expect("write map");
 
-    zw.start_file(&format!("{MAP_ZIP_BASE}/idx"), opts)
+    zw.start_file(format!("{MAP_ZIP_BASE}/idx").as_str(), opts)
         .expect("start idx");
     zw.write_all(idx.as_bytes()).expect("write idx");
 

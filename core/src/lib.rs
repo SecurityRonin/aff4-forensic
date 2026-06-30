@@ -237,7 +237,7 @@ impl Aff4Reader {
         let chunk_in_seg = chunk_idx % self.chunks_per_segment;
 
         let segment_name = format!("{}/{:08x}", self.zip_base, segment_idx);
-        let index_name = format!("{}.index", segment_name);
+        let index_name = format!("{segment_name}.index");
 
         // Bevy index: 12-byte (offset, length) entries (see chunk_bounds_from_index).
         let index_data = self.read_zip_entry_bytes(&index_name)?;
@@ -358,7 +358,7 @@ impl Read for Aff4Reader {
 
                 let chunk = self
                     .read_chunk(chunk_idx)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                    .map_err(|e| std::io::Error::other(e.to_string()))?;
 
                 let available = chunk
                     .len()

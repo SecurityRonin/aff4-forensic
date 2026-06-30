@@ -194,11 +194,7 @@ pub(crate) fn resolve(map: &LoadedMap, virtual_pos: u64, virtual_size: u64) -> R
     }
 
     // In a gap: bytes until the start of the next entry (or virtual_size).
-    let gap_end = map
-        .entries
-        .get(idx)
-        .map(|e| e.map_offset)
-        .unwrap_or(virtual_size);
+    let gap_end = map.entries.get(idx).map_or(virtual_size, |e| e.map_offset);
     let bytes_in_gap = gap_end.saturating_sub(virtual_pos).max(1);
 
     ResolvedRegion {
