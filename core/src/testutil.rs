@@ -213,3 +213,69 @@ pub fn test_aff4_map(data: &[u8]) -> Vec<u8> {
 
     zw.finish().expect("finish zip").into_inner()
 }
+
+/// Build a minimal AFF4 container whose data stream is an `aff4:EncryptedStream`
+/// (password-wrapped keybag, AES-XTS), mirroring pyaff4's encrypted profile.
+///
+/// The reader must DETECT this profile and refuse loudly — never emit
+/// plausible-but-wrong plaintext. Only the metadata markers needed for detection
+/// are written.
+pub fn test_aff4_encrypted() -> Vec<u8> {
+    let turtle = format!(
+        "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n\
+         @prefix aff4: <http://aff4.org/Schema#> .\n\
+         <{STREAM_ARN}> rdf:type aff4:EncryptedStream ; \
+         aff4:size 4096 ; \
+         aff4:chunkSize {CHUNK_SIZE} ; \
+         aff4:chunksInSegment 1 ; \
+         aff4:keyBag <{STREAM_ARN}/keybag> ; \
+         aff4:compressionMethod aff4:NullCompressor .\n\
+         <{STREAM_ARN}/keybag> rdf:type aff4:PasswordWrappedKeyBag ; \
+         aff4:keySizeInBytes 32 ; \
+         aff4:salt \"00112233445566778899aabbccddeeff\" ; \
+         aff4:wrappedKey \"deadbeef\" .\n"
+    );
+
+    let cursor = std::io::Cursor::new(Vec::<u8>::new());
+    let mut zw = ZipWriter::new(cursor);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    zw.start_file("information.turtle", opts)
+        .expect("start turtle");
+    zw.write_all(turtle.as_bytes()).expect("write turtle");
+    zw.finish().expect("finish zip").into_inner()
+}
+
+/// Build a minimal AFF4-Logical (AFF4-L) container: one `aff4:FileImage` stored
+/// directly as a named ZIP segment, with `originalFileName`, `aff4:size`, and an
+/// `aff4:hash` (MD5), mirroring pyaff4's `dream.aff4` shape.
+///
+/// `segment` is the ZIP entry name (also the path tail of the FileImage ARN);
+/// `content` is its bytes; `md5_hex` is the stored MD5 digest.
+pub fn test_aff4_logical(segment: &str, content: &[u8], md5_hex: &str) -> Vec<u8> {
+    let vol = "aff4://issen-test-logical-volume";
+    let turtle = format!(
+        "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n\
+         @prefix aff4: <http://aff4.org/Schema#> .\n\
+         @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\
+         <{vol}/{segment}> rdf:type aff4:FileImage , aff4:Image , aff4:zip_segment ; \
+         aff4:originalFileName \"./{segment}\"^^xsd:string ; \
+         aff4:size {} ; \
+         aff4:lastWritten \"2018-09-17T13:42:20+10:00\"^^xsd:datetime ; \
+         aff4:hash \"{md5_hex}\"^^aff4:MD5 ; \
+         aff4:stored <{vol}> .\n",
+        content.len()
+    );
+
+    let cursor = std::io::Cursor::new(Vec::<u8>::new());
+    let mut zw = ZipWriter::new(cursor);
+    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    zw.start_file("information.turtle", opts)
+        .expect("start turtle");
+    zw.write_all(turtle.as_bytes()).expect("write turtle");
+    zw.start_file(segment, opts).expect("start segment");
+    zw.write_all(content).expect("write segment");
+    zw.start_file("version.txt", opts).expect("start version");
+    zw.write_all(b"major=1\nminor=1\ntool=issen-test\n")
+        .expect("write version");
+    zw.finish().expect("finish zip").into_inner()
+}

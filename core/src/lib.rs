@@ -430,6 +430,7 @@ fn chunk_bounds_from_index(index: &[u8], chunk_in_seg: u64) -> Result<(usize, us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use md5::Digest as _;
     use std::io::Cursor;
     use std::io::Write as _;
     use zip::write::{SimpleFileOptions, ZipWriter};
@@ -501,6 +502,59 @@ mod tests {
         let data = zw.finish().expect("finish").into_inner();
         let f = write_tmp(&data);
         assert!(Aff4Reader::open(f.path()).is_err());
+    }
+
+    // ── Encrypted volumes: detect and refuse (never emit garbage) ─────────────
+    //
+    // An aff4:EncryptedStream (AES-XTS, password/cert-wrapped keybag) must be
+    // detected and refused with a named, encryption-specific error — not decoded
+    // as if it were plaintext. Decryption is a later epic; the v1 floor is a
+    // loud refusal (see HANDOFF §4).
+    #[test]
+    fn encrypted_stream_is_detected_and_refused() {
+        let img = testutil::test_aff4_encrypted();
+        let f = write_tmp(&img);
+        let err = Aff4Reader::open(f.path()).expect_err("encrypted image must be refused");
+        assert!(
+            matches!(err, Aff4Error::Encrypted(_)),
+            "must be a named Aff4Error::Encrypted, got {err:?}"
+        );
+        let msg = err.to_string().to_ascii_lowercase();
+        assert!(
+            msg.contains("encrypt"),
+            "the refusal must name encryption as the cause; got: {err}"
+        );
+    }
+
+    // ── AFF4-Logical (AFF4-L): a collection of files, not a disk image ────────
+    //
+    // AFF4-L stores logical files as named ZIP segments described by aff4:FileImage
+    // nodes (path, size, hashes, timestamps). Open the container as a logical
+    // collection, enumerate its files, and read one file's bytes. Cross-checked
+    // against the zip oracle (the `zip` engine) and the stored MD5.
+    #[test]
+    fn logical_container_lists_and_reads_files() {
+        let content = b"I have a Dream, delivered 1963.\n";
+        let md5 = format!("{:x}", md5::Md5::digest(content));
+        let img = testutil::test_aff4_logical("dir/dream.txt", content, &md5);
+        let f = write_tmp(&img);
+
+        let mut container = LogicalContainer::open(f.path()).expect("open AFF4-L container");
+        let files = container.files().to_vec();
+        assert_eq!(files.len(), 1, "one logical file expected");
+        let entry = &files[0];
+        assert_eq!(entry.original_file_name, "./dir/dream.txt");
+        assert_eq!(entry.size, content.len() as u64);
+        assert!(entry
+            .hashes
+            .iter()
+            .any(|h| h.algorithm.eq_ignore_ascii_case("MD5") && h.hex == md5));
+
+        let got = container.read_file(entry).expect("read logical file");
+        assert_eq!(
+            got, content,
+            "logical file bytes must match the stored segment"
+        );
     }
 
     #[test]

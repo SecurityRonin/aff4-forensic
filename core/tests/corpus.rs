@@ -8,6 +8,7 @@
 /// - Snappy-compressed chunks (all reference images use Snappy)
 /// - Sparse chunks (index entries with 0 bytes = virtual zeros)
 use aff4::Aff4Reader;
+use md5::Digest as _;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -326,5 +327,49 @@ fn corpus_linear_symbolic_stream_61() {
         read_at(&mut reader, 265_355_264, 8),
         vec![0x61u8; 8],
         "SymbolicStream61 must fill with byte 0x61, not zeros"
+    );
+}
+
+// ── AFF4-Logical (AFF4-L) against the pyaff4 reference container ───────────────
+//
+// Tier-1 oracle: pyaff4's `dream.aff4` (test_images/AFF4-L). Env-gated — set
+// AFF4L_DREAM to its path to run. The container holds one logical file,
+// `./test_images/AFF4-L/dream.txt` (8688 bytes, MLK "I Have a Dream"), whose
+// stored aff4:hash MD5 is 75d83773f8d431a3ca91bfb8859e486d.
+
+#[test]
+fn aff4l_dream_lists_and_reads_against_pyaff4() {
+    let Some(path) = std::env::var_os("AFF4L_DREAM") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    if !path.exists() {
+        return;
+    }
+    let mut container = aff4::LogicalContainer::open(&path).expect("open dream.aff4");
+    let files = container.files().to_vec();
+    let dream = files
+        .iter()
+        .find(|f| f.original_file_name.ends_with("dream.txt"))
+        .expect("dream.txt logical entry");
+    assert_eq!(dream.size, 8688, "dream.txt logical size (aff4:size)");
+    assert!(
+        dream
+            .hashes
+            .iter()
+            .any(|h| h.algorithm.eq_ignore_ascii_case("MD5")
+                && h.hex == "75d83773f8d431a3ca91bfb8859e486d"),
+        "stored MD5 must be the pyaff4-recorded digest"
+    );
+    let bytes = container.read_file(dream).expect("read dream.txt");
+    assert_eq!(bytes.len(), 8688, "content length matches aff4:size");
+    let md5 = format!("{:x}", md5::Md5::digest(&bytes));
+    assert_eq!(
+        md5, "75d83773f8d431a3ca91bfb8859e486d",
+        "recomputed MD5 of the logical content must match the stored aff4:hash"
+    );
+    assert!(
+        bytes.starts_with(b"I have a Dream"),
+        "content must be the MLK speech text"
     );
 }
