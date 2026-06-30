@@ -1,9 +1,11 @@
-//! AFF4 forensic analyzer — image-hash integrity verification and structural
-//! anomaly detection, layered over the `aff4` reader (`aff4::Aff4Reader`).
+//! AFF4 forensic analyzer — image-hash integrity verification, layered over the
+//! `aff4` reader (`aff4::Aff4Reader`).
 //!
-//! **SCAFFOLD.** `audit_image` is a stub; the real work is the strict-TDD plan in
-//! `../HANDOFF.md` (hash verification → `AFF4-HASH-MISMATCH` findings; the
-//! reader-side gaps — allocated maps, AFF4-L, encryption — live in `core/`).
+//! [`audit_image`] recomputes each declared ImageStream `aff4:hash` over the
+//! decompressed content and reconciles it against the stored digest, emitting
+//! `AFF4-HASH-MISMATCH` on divergence and `AFF4-HASH-UNREADABLE` for regions the
+//! acquisition could not read. Validated Tier-1 against the AFF4 reference corpus
+//! (see `docs/validation.md`).
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
@@ -78,14 +80,18 @@ impl Observation for Aff4Anomaly {
     }
 }
 
-/// Audit an AFF4 image's integrity: recompute each declared `aff4:hash` over the
-/// virtual stream and compare it against the stored digest.
+/// Audit an AFF4 image's integrity: recompute each declared ImageStream
+/// `aff4:hash` over the decompressed content and compare it against the stored
+/// digest, and report regions marked `aff4:UnreadableData`.
 ///
-/// **SCAFFOLD** — opens the reader to prove the wiring, then returns no findings.
-/// Oracle: `core/tests/data/Base-Linear-AllHashes.aff4`. See `../HANDOFF.md` §1.
+/// Returns one [`AFF4-HASH-MISMATCH`](Aff4Anomaly::HashMismatch) finding per
+/// digest divergence and one [`AFF4-HASH-UNREADABLE`](Aff4Anomaly::HashUnreadable)
+/// per unacquired region. An empty result means every declared hash reconciled
+/// and no region was unreadable.
 ///
 /// # Errors
-/// Returns [`Aff4Error`] if the image cannot be opened or parsed.
+/// Returns [`Aff4Error`] if the image cannot be opened or parsed — including
+/// [`Aff4Error::Encrypted`] for an encrypted image (refused, never decoded).
 pub fn audit_image(path: &Path) -> Result<Vec<Finding>, Aff4Error> {
     let mut reader = Aff4Reader::open(path)?;
     let anomalies = verify_image_hashes(&mut reader)?;
