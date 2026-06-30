@@ -197,3 +197,68 @@ fn corpus_base_allocated_virtual_size() {
          not from the inner ImageStream block (3964928)"
     );
 }
+
+// ── ImageStream content hashes (the integrity-audit surface) ──────────────────
+//
+// The recomputable aff4:hash digests live on the ImageStream node and cover the
+// decompressed ImageStream content (aff4:size bytes), NOT the map-expanded
+// virtual disk. Evimetry authored these digests, so they are an independent
+// Tier-1 oracle for the analyzer's recompute-and-compare.
+
+/// `stored_image_hashes()` parses every `aff4:hash` declared on the ImageStream.
+#[test]
+fn corpus_allhashes_stored_image_hashes_parsed() {
+    let path = corpus("Base-Linear-AllHashes.aff4");
+    if !path.exists() {
+        return;
+    }
+    let reader = Aff4Reader::open(&path).expect("open");
+    let hashes = reader.stored_image_hashes();
+    let algos: std::collections::BTreeSet<String> = hashes
+        .iter()
+        .map(|h| h.algorithm.to_ascii_uppercase())
+        .collect();
+    for a in ["MD5", "SHA1", "SHA256", "SHA512", "BLAKE2B"] {
+        assert!(algos.contains(a), "missing stored {a}; got {algos:?}");
+    }
+    let md5 = hashes
+        .iter()
+        .find(|h| h.algorithm.eq_ignore_ascii_case("MD5"))
+        .expect("MD5 present");
+    assert_eq!(
+        md5.hex, "d5825dc1152a42958c8219ff11ed01a3",
+        "stored MD5 (Evimetry-authored) must be parsed verbatim"
+    );
+}
+
+/// `read_image_stream_content()` yields the decompressed ImageStream bytes
+/// (length == aff4:size) and begins with the real MBR.
+#[test]
+fn corpus_allhashes_image_stream_content_is_real() {
+    let path = corpus("Base-Linear-AllHashes.aff4");
+    if !path.exists() {
+        return;
+    }
+    let mut reader = Aff4Reader::open(&path).expect("open");
+    assert_eq!(reader.image_stream_size(), 3_964_928);
+    let mut total = 0u64;
+    let mut head: Vec<u8> = Vec::new();
+    reader
+        .read_image_stream_content(|c| {
+            if head.len() < 512 {
+                let want = 512 - head.len();
+                head.extend_from_slice(&c[..c.len().min(want)]);
+            }
+            total += c.len() as u64;
+        })
+        .expect("read ImageStream content");
+    assert_eq!(
+        total, 3_964_928,
+        "ImageStream content length must equal aff4:size"
+    );
+    assert_eq!(
+        (head[510], head[511]),
+        (0x55, 0xAA),
+        "ImageStream content begins with the MBR (boot signature at 510)"
+    );
+}
