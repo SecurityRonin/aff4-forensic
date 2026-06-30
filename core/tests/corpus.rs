@@ -262,3 +262,69 @@ fn corpus_allhashes_image_stream_content_is_real() {
         "ImageStream content begins with the MBR (boot signature at 510)"
     );
 }
+
+// ── Symbolic-stream fills (aff4:UnknownData, SymbolicStream{XX}) ───────────────
+//
+// AFF4 maps fill non-imaged regions with symbolic streams. Per pyaff4
+// (stream_factory.py): aff4:UnknownData repeats the ASCII tile "UNKNOWN" over a
+// 1 MiB window — byte(p) = seed[(p % 1_048_576) % seed.len()], where p is the
+// target-stream position. SymbolicStream{XX} produces the constant byte 0xXX.
+// A reader that maps these to zeros is wrong; these tests assert the pyaff4 bytes.
+
+fn read_at(reader: &mut Aff4Reader, offset: u64, len: usize) -> Vec<u8> {
+    reader.seek(SeekFrom::Start(offset)).expect("seek");
+    let mut buf = vec![0u8; len];
+    reader.read_exact(&mut buf).expect("read");
+    buf
+}
+
+/// Base-Allocated fills its unallocated regions with `aff4:UnknownData`.
+/// Virtual 17825792 starts a 1 MiB-aligned UnknownData region (target_offset
+/// 17825792); the first 16 bytes are the "UNKNOWN" tile.
+#[test]
+fn corpus_allocated_unknown_data_tile() {
+    let path = corpus("Base-Allocated.aff4");
+    if !path.exists() {
+        return;
+    }
+    let mut reader = Aff4Reader::open(&path).expect("open");
+    assert_eq!(
+        read_at(&mut reader, 17_825_792, 16),
+        b"UNKNOWNUNKNOWNUN".to_vec(),
+        "aff4:UnknownData region must yield the 'UNKNOWN' tile, not zeros"
+    );
+}
+
+/// The "UNKNOWN" tile resets at every 1 MiB boundary (1 MiB is not a multiple of
+/// 7), so the pattern has a seam. Reading 8 bytes straddling the first boundary
+/// of the region at target_offset 17825792 (virtual 18874365) must yield the
+/// pyaff4-oracle bytes `NKNUNKNO`, proving the 1 MiB modulus is honored.
+#[test]
+fn corpus_allocated_unknown_data_seam() {
+    let path = corpus("Base-Allocated.aff4");
+    if !path.exists() {
+        return;
+    }
+    let mut reader = Aff4Reader::open(&path).expect("open");
+    assert_eq!(
+        read_at(&mut reader, 18_874_365, 8),
+        b"NKNUNKNO".to_vec(),
+        "UnknownData tile must reset on the 1 MiB seam (pyaff4 readptr % tilesize)"
+    );
+}
+
+/// Base-Linear has one `SymbolicStream61` region (virtual 265355264, 32768 bytes)
+/// — a constant fill of byte 0x61.
+#[test]
+fn corpus_linear_symbolic_stream_61() {
+    let path = corpus("Base-Linear.aff4");
+    if !path.exists() {
+        return;
+    }
+    let mut reader = Aff4Reader::open(&path).expect("open");
+    assert_eq!(
+        read_at(&mut reader, 265_355_264, 8),
+        vec![0x61u8; 8],
+        "SymbolicStream61 must fill with byte 0x61, not zeros"
+    );
+}
