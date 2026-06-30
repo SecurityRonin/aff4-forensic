@@ -1,16 +1,17 @@
 [![Crates.io](https://img.shields.io/crates/v/aff4.svg)](https://crates.io/crates/aff4)
 [![Docs.rs](https://img.shields.io/docsrs/aff4)](https://docs.rs/aff4)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![CI](https://github.com/SecurityRonin/aff4/actions/workflows/ci.yml/badge.svg)](https://github.com/SecurityRonin/aff4/actions/workflows/ci.yml)
+[![CI](https://github.com/SecurityRonin/aff4-forensic/actions/workflows/ci.yml/badge.svg)](https://github.com/SecurityRonin/aff4-forensic/actions/workflows/ci.yml)
 [![Sponsor](https://img.shields.io/badge/sponsor-h4x0r-ea4aaa?logo=github-sponsors)](https://github.com/sponsors/h4x0r)
 
-**Pure-Rust read-only AFF4 v1 disk image reader — Map streams, Snappy/LZ4/Deflate, and ExabyteSparse support.**
+**Pure-Rust read-only AFF4 reader (`aff4`) + integrity analyzer (`aff4-forensic`) — Map streams, Snappy/LZ4/Deflate, symbolic fills, AFF4-Logical, and self-hash verification.**
 
-Decodes AFF4 (Advanced Forensic Format 4) Standard v1.0 containers produced by Evimetry, aff4-imager, and pyaff4. Handles `aff4:Map` virtual address mapping, sparse zero and 0xFF regions, all three compression codecs, and the URL-encoded ZIP entry names used by the reference implementation. Exposes a `Read + Seek` interface over the virtual sector stream. Zero unsafe code, no C bindings.
+Decodes AFF4 (Advanced Forensic Format 4) Standard v1.0 containers produced by Evimetry, aff4-imager, and pyaff4: `aff4:Map` virtual address mapping, all four chunk codecs, symbolic-stream fills (Zero / `0xFF` / `SymbolicStream{XX}` / UnknownData / UnreadableData), URL-encoded ZIP entry names, and AFF4-Logical (AFF4-L) file containers. Exposes a `Read + Seek` interface over the virtual sector stream. Zero unsafe code, no C bindings. The analyzer recomputes each declared `aff4:hash` and reports tampering / unreadable regions.
 
 ```toml
 [dependencies]
-aff4 = "0.1"
+aff4 = "0.2"            # the reader
+aff4-forensic = "0.1"   # the integrity analyzer (optional)
 ```
 
 ---
@@ -23,7 +24,7 @@ aff4 = "0.1"
 use aff4::Aff4Reader;
 use std::io::{Read, Seek, SeekFrom};
 
-let mut reader = Aff4Reader::open("disk.aff4")?;
+let mut reader = Aff4Reader::open("disk.aff4".as_ref())?;
 
 println!("Virtual disk size: {} bytes", reader.virtual_disk_size());
 
@@ -33,17 +34,35 @@ reader.read_exact(&mut sector)?;
 
 // Seek anywhere
 reader.seek(SeekFrom::Start(1_048_576))?;
+# Ok::<(), aff4::Aff4Error>(())
 ```
 
-### Pass to a filesystem crate
+`Aff4Reader` implements `Read + Seek`, so it drops directly into any crate that accepts a reader (e.g. a filesystem parser).
 
-`Aff4Reader` implements `Read + Seek`, so it drops directly into any crate that accepts a reader:
+### Audit an image's integrity
 
 ```rust
-use aff4::Aff4Reader;
+use aff4_forensic::audit_image;
 
-let reader = Aff4Reader::open("disk.aff4")?;
-// e.g. ext4fs_forensic::Filesystem::open(reader)?;
+for finding in audit_image("disk.aff4".as_ref())? {
+    // AFF4-HASH-MISMATCH (stored hash ≠ recomputed) or
+    // AFF4-HASH-UNREADABLE (a region could not be acquired)
+    println!("{}: {}", finding.code, finding.note);
+}
+# Ok::<(), aff4::Aff4Error>(())
+```
+
+### Read logical files (AFF4-L)
+
+```rust
+use aff4::LogicalContainer;
+
+let mut container = LogicalContainer::open("logical.aff4".as_ref())?;
+for entry in container.files().to_vec() {
+    let bytes = container.read_file(&entry)?;
+    println!("{} ({} bytes)", entry.original_file_name, bytes.len());
+}
+# Ok::<(), aff4::Aff4Error>(())
 ```
 
 ---
@@ -53,18 +72,18 @@ let reader = Aff4Reader::open("disk.aff4")?;
 | Feature | Status |
 |---------|:------:|
 | AFF4 v1 Standard (Evimetry 3.0 reference images) | ✓ |
-| Scudette / aff4-imager start-offset index format | ✓ |
+| 12-byte bevy index (`(offset, length)` per chunk) | ✓ |
 | `aff4:Map` virtual address mapping | ✓ |
-| Sparse Zero regions (`aff4:Zero`) | ✓ |
-| Sparse 0xFF regions (`aff4:SymbolicStreamFF`) | ✓ |
+| Symbolic `aff4:Zero` / `SymbolicStreamFF` / `SymbolicStream{XX}` | ✓ |
+| `aff4:UnknownData` / `UnreadableData` tile fills (pyaff4-exact) | ✓ |
 | ExabyteSparse images (≤ 9.2 EiB virtual size) | ✓ |
-| Snappy decompression | ✓ |
-| LZ4 frame decompression | ✓ |
-| Deflate / zlib decompression | ✓ |
-| Null (uncompressed) chunks | ✓ |
+| Snappy / LZ4 frame / Deflate (zlib) / Null codecs | ✓ |
 | URL-encoded ZIP entry names (`aff4%3A%2F%2F…`) | ✓ |
+| AFF4-Logical (AFF4-L) file containers | ✓ |
+| `aff4:hash` verification → `AFF4-HASH-MISMATCH` / `-UNREADABLE` | ✓ |
+| Encrypted volumes (`aff4:EncryptedStream`) | detect & refuse |
 
-Read-only. `aff4:Map` is required for all Evimetry images and most production AFF4 captures.
+Read-only. Validated Tier-1 against the AFF4 reference corpus and pyaff4 — see the [reader](https://securityronin.github.io/aff4-forensic/corpus-validation/) and [audit](https://securityronin.github.io/aff4-forensic/validation/) validation docs.
 
 ---
 
@@ -74,24 +93,17 @@ Read-only. `aff4:Map` is required for all Evimetry images and most production AF
 
 | Crate | Format | Notes |
 |-------|--------|-------|
-| [`ewf`](https://github.com/SecurityRonin/ewf) | E01 / EWF / Ex01 | Dominant professional forensic acquisition format |
-| [`vmdk`](https://github.com/SecurityRonin/vmdk) | VMware VMDK | Monolithic sparse disk images from VMware Workstation / ESXi |
-| [`vhdx`](https://github.com/SecurityRonin/vhdx) | Microsoft VHDX | Hyper-V, Windows 8+, WSL2, Azure disk container |
-| [`vhd`](https://github.com/SecurityRonin/vhd) | Legacy VHD | Virtual PC / Hyper-V Generation-1 fixed and dynamic disk images |
+| [`ewf`](https://github.com/SecurityRonin/ewf-forensic) | E01 / EWF / Ex01 | Dominant professional forensic acquisition format |
+| [`vmdk`](https://github.com/SecurityRonin/vmdk-forensic) | VMware VMDK | Monolithic sparse disk images from VMware Workstation / ESXi |
 | [`qcow2`](https://github.com/SecurityRonin/qcow2) | QCOW2 v2/v3 | QEMU / KVM / libvirt disk images |
-| [`ufed`](https://github.com/SecurityRonin/ufed) | Cellebrite UFED | Physical mobile device dumps with UFD XML segment mapping |
-| [`dd`](https://github.com/SecurityRonin/dd) | Raw / flat / gz | dd, dcfldd, and gzip-wrapped raw images |
-| [`iso9660-forensic`](https://github.com/SecurityRonin/iso9660-forensic) | ISO 9660 | Optical disc images: multi-session, UDF bridge, Rock Ridge, Joliet, El Torito |
-| [`dmg`](https://github.com/SecurityRonin/dmg) | Apple DMG / UDIF | macOS disk images with koly trailer, mish block tables, zlib decompression |
-| [`dar`](https://github.com/SecurityRonin/dar) | DAR archive | Disk ARchiver archives with catalog index and CRC32 validation |
 
 ### Forensic analysers
 
 | Crate | Format | Notes |
 |-------|--------|-------|
-| [`ewf-forensic`](https://github.com/SecurityRonin/ewf-forensic) | E01 | Structural integrity audit, Adler-32 / MD5 hash verification, and in-memory repair |
+| [`ewf-forensic`](https://github.com/SecurityRonin/ewf-forensic) | E01 | Structural integrity audit, hash verification, and in-memory repair |
 | [`vhdx-forensic`](https://github.com/SecurityRonin/vhdx-forensic) | VHDX | Forensic integrity analyser and in-memory repair tool for VHDX containers |
 
 ---
 
-[Privacy Policy](https://securityronin.github.io/aff4/privacy/) · [Terms of Service](https://securityronin.github.io/aff4/terms/) · © 2026 Security Ronin Ltd
+[Privacy Policy](https://securityronin.github.io/aff4-forensic/privacy/) · [Terms of Service](https://securityronin.github.io/aff4-forensic/terms/) · © 2026 Security Ronin Ltd

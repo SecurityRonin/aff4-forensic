@@ -18,7 +18,7 @@ the reference implementation of the AFF4 Standard v1.0.
 | `Base-ExabyteSparse.aff4` | ~4.5 MiB nominal | Sparse image claiming exabyte virtual size |
 
 All five open and read correctly with `Aff4Reader::open`; see
-`../docs/corpus-validation.md` for the Tier-1 reconciliation against Evimetry's
+the repo's `docs/corpus-validation.md` for the Tier-1 reconciliation against Evimetry's
 stored hashes.
 
 ## Regenerating

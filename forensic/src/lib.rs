@@ -5,7 +5,7 @@
 //! decompressed content and reconciles it against the stored digest, emitting
 //! `AFF4-HASH-MISMATCH` on divergence and `AFF4-HASH-UNREADABLE` for regions the
 //! acquisition could not read. Validated Tier-1 against the AFF4 reference corpus
-//! (see `docs/validation.md`).
+//! (see the repo's `docs/validation.md`).
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 

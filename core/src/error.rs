@@ -2,6 +2,7 @@
 
 /// Errors that can occur while opening or reading an AFF4 image.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Aff4Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

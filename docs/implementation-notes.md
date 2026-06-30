@@ -1,141 +1,116 @@
 # AFF4 Implementation Notes
 
-Developer notes capturing format quirks, spec contradictions, and empirically verified
-behaviour. Intended for future contributors and as a basis for upstream spec clarifications.
+Format quirks and empirically verified behaviour, for contributors. Every byte-level
+claim here is reconciled against the AFF4 reference corpus and pyaff4 (see
+[Corpus Validation](corpus-validation.md)).
 
 ---
 
 ## 1. AFF4 is a ZIP container with RDF/Turtle metadata
 
-AFF4 (Advanced Forensic Format 4) stores forensic images as standard ZIP archives.
-The metadata is an RDF/Turtle document named `information.turtle` inside the ZIP.
+AFF4 stores forensic images as standard ZIP archives. The metadata is an RDF/Turtle
+document named `information.turtle` inside the ZIP. Disk-image data is stored as
+"bevy" segments:
 
-### ZIP entry naming
-
-The data is stored as "bevy" segments named:
 ```
-{uuid}/{segment_idx:08x}         ← sector data for this bevy
-{uuid}/{segment_idx:08x}.index   ← chunk index for this bevy
+{base}/{segment_idx:08x}         ← chunk data for this bevy
+{base}/{segment_idx:08x}.index   ← chunk index for this bevy
 ```
 
-where `{uuid}` is the AFF4 ARN (Archival Resource Name) with the `aff4://` prefix
-stripped. The segment index is zero-padded to 8 lowercase hex digits.
-
-**Common pitfall:** forgetting to strip `aff4://` from the ARN before constructing
-ZIP entry names. The ZIP archive does not contain the `aff4://` scheme prefix.
-
-```rust
-let zip_base = meta.stream_arn
-    .strip_prefix("aff4://")
-    .unwrap_or(&meta.stream_arn)
-    .to_string();
-```
+`{base}` derives from the stream ARN with the `aff4://` scheme stripped. Real
+Evimetry / aff4-imager images **URL-encode** the IRI as `aff4%3A%2F%2F{uuid}/…`;
+synthetic fixtures use the bare path. The reader detects which form the ZIP uses.
 
 ---
 
-## 2. Bevy index: cumulative end-offsets, not start-offsets
+## 2. Bevy index: 12-byte `(offset, length)` entries
 
-The `.index` file for each bevy is an array of **`u32` little-endian cumulative
-end-byte offsets** (one per chunk). The start offset of chunk `i` is the end offset
-of chunk `i-1` (or 0 for the first chunk).
-
-```
-Index file layout:
-  [0..4]  = end byte of chunk 0 (= length of chunk 0)
-  [4..8]  = end byte of chunk 1 (= end of chunk 0 + length of chunk 1)
-  ...
-  [n*4..(n+1)*4] = end byte of chunk n
-```
-
-To compute the file range `[start, end)` for chunk `i`:
+The `.index` file is a packed array of **12-byte little-endian entries**, one per
+chunk: `(u64 byte_offset, u32 length)` — the chunk's position and stored (possibly
+compressed) size within the bevy segment.
 
 ```rust
-let end   = u32::from_le_bytes(index[i*4..i*4+4]) as usize;
-let start = if i == 0 { 0 } else { u32::from_le_bytes(index[(i-1)*4..i*4]) as usize };
+let base   = chunk_in_seg * 12;
+let offset = u64::from_le_bytes(index[base..base + 8]) as usize;
+let length = u32::from_le_bytes(index[base + 8..base + 12]) as usize;
+let (start, end) = (offset, offset + length);
 ```
 
-**Common pitfall:** treating index values as start offsets. This mis-interprets all
-chunks after the first — the first chunk reads correctly but subsequent chunks are
-offset by one entry.
+A **zero-length** entry marks a sparse (all-zero) chunk. A chunk whose stored
+`length` equals `aff4:chunkSize` was written **uncompressed** — copy it verbatim,
+regardless of the stream's `compressionMethod`.
+
+This 12-byte layout is verified by reproducing Evimetry's stored `aff4:hash`
+digests; a 4-byte cumulative-end interpretation reproduces none of them and mis-reads
+every real image (it reads `Base-Linear` sector 0 as zeros instead of its MBR).
 
 ---
 
-## 3. Compression: zlib (with header), not raw DEFLATE
+## 3. Compression
 
-AFF4's `DeflateCompressor` uses **zlib framing** (RFC 1950: 2-byte header + Adler-32
-trailer), unlike QCOW2 which uses raw DEFLATE (no header, `windowBits = -15`).
+`aff4:compressionMethod` selects the codec:
 
-Use `flate2::read::ZlibDecoder`, **not** `DeflateDecoder`:
+- `aff4:NullCompressor` (or absent) → raw bytes
+- `aff4:DeflateCompressor` → zlib (RFC 1950, 2-byte header + Adler-32) —
+  `flate2::read::ZlibDecoder`, **not** raw DEFLATE
+- `<http://code.google.com/p/snappy/>` → raw Snappy — `snap::raw::Decoder`
+- `<https://github.com/lz4/lz4>` → LZ4 frame (aff4-imager) — `lz4_flex::frame`
 
-```rust
-Compression::Deflate => {
-    let mut dec = flate2::read::ZlibDecoder::new(compressed);
-    dec.read_to_end(&mut out)?;
-}
-```
-
-The compression type is identified in `information.turtle`:
-- `aff4:NullCompressor` (or absent) → no compression; read bytes directly
-- `aff4:DeflateCompressor` → zlib
-- `aff4:SnappyCompressor` → Snappy (not supported in this implementation)
+All five AFF4 Standard reference images use Snappy.
 
 ---
 
 ## 4. RDF/Turtle parsing is intentionally minimal
 
-`information.turtle` is a valid Turtle/N3 document but implementing a full Turtle
-parser is out of scope. Our approach:
-
-1. Normalize all whitespace variants (`\n`, `\r`, `\t`) and `;` to spaces
-2. Split the normalized text on `" . "` (dot separates RDF subjects)
-3. Find the block containing `"ImageStream"`
-4. Extract the IRI (`<...>`) as the stream ARN
-5. Extract predicate-value pairs by token-window scanning
-
-This works for AFF4 images produced by aff4-cpp, aff4-imager, and pyaff4. It will
-fail on Turtle with unusual formatting (e.g., multi-line IRIs, prefixed names for
-predicates we expect as full URIs).
-
-**Upstream tools that produce valid AFF4:** aff4-imager, Rekall imager, AVML (Linux).
-**Not supported:** AFF4-L (AFF4-Logical, file-level container) — this implementation
-handles AFF4 disk images (physical/raw sector images) only.
+Rather than a full Turtle parser: normalize whitespace and `;` to spaces, split on
+`" . "` (the RDF node delimiter), find the relevant block, and extract the IRI
+(`<…>`) and predicate-value pairs by token scanning. This handles aff4-cpp,
+aff4-imager, and pyaff4 output. One real-world quirk it must absorb: pyaff4 writes a
+trailing comma attached to a hash datatype (`…"^^aff4:MD5,`), so the datatype token
+is trimmed of trailing non-alphanumerics.
 
 ---
 
 ## 5. Geometry validation is mandatory before opening
 
-`aff4:chunkSize` and `aff4:chunksInSegment` feed directly into division arithmetic
-in `read_chunk`. If either is 0, the reader panics with divide-by-zero. Validate
-at parse time:
-
-```rust
-if chunk_size == 0 {
-    return Err(Aff4Error::BadFormat("aff4:chunkSize must be > 0".into()));
-}
-if chunks_per_segment == 0 {
-    return Err(Aff4Error::BadFormat("aff4:chunksInSegment must be > 0".into()));
-}
-```
-
-This is not mentioned explicitly in the AFF4 specification; it is a consequence of
-the reader's implementation requiring valid division operands.
+`aff4:chunkSize` and `aff4:chunksInSegment` feed division in `read_chunk`; a value
+of 0 would divide-by-zero. Both are rejected at parse time with a `BadFormat` error.
+This is a consequence of the reader's arithmetic, not stated in the spec.
 
 ---
 
-## 6. ExabyteSparse streams (not supported)
+## 6. Map streams and symbolic fills
 
-AFF4-L (logical) and some physical images use `aff4:ExabyteSparseMap` to record
-which regions of the virtual address space are present vs. absent (sparse). This
-implementation assumes all chunks are present (no sparse map). Reading an
-ExabyteSparse image without honouring the map returns zeros for absent regions
-silently.
+Evimetry images use an `aff4:Map` as the top-level stream: a binary `/map` of
+28-byte entries `(map_offset, length, target_offset, target_id)` plus an `/idx`
+list of target URIs. A virtual address resolves to an ImageStream region or a
+**symbolic stream**:
+
+| Target | Fill |
+|---|---|
+| `aff4:Zero` | `0x00` |
+| `aff4:SymbolicStreamFF` / `aff4:SymbolicStream{XX}` | constant byte `0xXX` |
+| `aff4:UnknownData` | tile `UNKNOWN` |
+| `aff4:UnreadableData` | tile `UNREADABLEDATA` |
+
+Tile fills follow pyaff4: `byte(p) = seed[(p % 1_048_576) % seed.len()]` with
+`p = target_offset + offset_within_region`. The 1 MiB modulus introduces a seam at
+each 1 MiB boundary. `Base-Allocated` fills unallocated regions with `UnknownData`;
+this is the substance behind the corpus's "allocated" maps.
 
 ---
 
-## Upstream PR candidates
+## 7. AFF4-Logical (AFF4-L)
 
-| Project | File | Suggested change |
-|---------|------|-----------------|
-| aff4 spec | §5.3 (bevy index) | Explicitly state that index entries are cumulative end-byte offsets, not start offsets; add a worked example |
-| aff4 spec | §5.4 (compression) | Clarify that `DeflateCompressor` uses RFC 1950 zlib framing (2-byte header + Adler-32), not raw DEFLATE |
-| pyaff4 | `aff4/aff4_image.py` | Add docstring explaining the cumulative-end-offset index format |
+An AFF4-L container stores logical files as named ZIP segments described by
+`aff4:FileImage` nodes (path, `aff4:size`, `aff4:hash`, timestamps). It has no
+virtual disk and no bevy/chunk/map machinery — `LogicalContainer` reads each file's
+content straight from its ZIP segment. Validated against pyaff4's `dream.aff4`.
+
+---
+
+## 8. Encryption: detect and refuse
+
+`aff4:EncryptedStream` (AES-XTS, password/cert-wrapped keybag) is detected from the
+turtle and refused with `Aff4Error::Encrypted` — the reader never decodes ciphertext
+as plaintext. Provide-key decryption is a later epic.

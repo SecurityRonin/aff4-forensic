@@ -1,0 +1,9 @@
+# Fleet dev-toolchain pin: one stable across all contributors + CI, ending
+# fmt/clippy drift. This is the DEV toolchain, NOT the declared MSRV — the
+# published libraries keep their low `rust-version` (1.85) as a downstream
+# compatibility promise, verified by the separate MSRV CI job. Components are
+# declared here (single source of truth) so CI jobs that float `@stable` still
+# get fmt/clippy on this pinned version.
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt"]
