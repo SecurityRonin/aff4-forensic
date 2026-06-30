@@ -112,3 +112,31 @@ fn tampered_content_yields_hash_mismatch() {
         findings.len()
     );
 }
+
+#[test]
+fn read_error_image_flags_unreadable_not_mismatch() {
+    let p = corpus("Base-Linear-ReadError.aff4");
+    if !p.exists() {
+        return;
+    }
+    let findings = audit_image(&p).expect("audit read-error image");
+    let unreadable = findings
+        .iter()
+        .filter(|f| f.code == "AFF4-HASH-UNREADABLE")
+        .count();
+    let mismatches = findings
+        .iter()
+        .filter(|f| f.code == "AFF4-HASH-MISMATCH")
+        .count();
+    // The image carries 32 aff4:UnreadableData regions; its ImageStream content
+    // hash still reconciles (the imaged bytes are intact). So the audit reports
+    // the unreadable caveat, NOT a tamper mismatch.
+    assert!(
+        unreadable >= 1,
+        "a read-error image must surface at least one AFF4-HASH-UNREADABLE"
+    );
+    assert_eq!(
+        mismatches, 0,
+        "the intact ImageStream content must not be reported as a mismatch"
+    );
+}
