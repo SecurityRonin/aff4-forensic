@@ -32,9 +32,15 @@ pub(crate) struct StreamMeta {
     pub stream_arn: String,
     /// Virtual disk size: Map's `aff4:size` when Map is present; otherwise ImageStream's.
     pub virtual_size: u64,
+    /// The ImageStream's own `aff4:size` — the length of its decompressed content,
+    /// which the ImageStream `aff4:hash` digests cover. Equals `virtual_size` for a
+    /// direct (non-Map) image.
+    pub image_stream_size: u64,
     pub chunk_size: u64,
     pub chunks_per_segment: u64,
     pub compression: Compression,
+    /// Content digests declared on the ImageStream node (`aff4:hash`).
+    pub image_hashes: Vec<crate::StoredHash>,
     /// Present when the image uses an `aff4:Map` as its top-level data stream.
     pub map_meta: Option<MapMeta>,
 }
@@ -130,19 +136,69 @@ fn parse_image_stream_block(
     }
 
     let compression = detect_compression(block);
+    let image_stream_size = extract_pred_u64(block, "aff4:size")?;
+    let image_hashes = parse_image_hashes(block);
 
     let (virtual_size, map_meta) = match map_override {
         Some((mm, vs)) => (vs, Some(mm)),
-        None => (extract_pred_u64(block, "aff4:size")?, None),
+        None => (image_stream_size, None),
     };
 
     Ok(StreamMeta {
         stream_arn,
         virtual_size,
+        image_stream_size,
         chunk_size,
         chunks_per_segment,
         compression,
+        image_hashes,
         map_meta,
+    })
+}
+
+/// Parse the `aff4:hash` content digests declared on an ImageStream block.
+///
+/// Values follow the predicate as a comma-separated list of `"<hex>"^^aff4:<ALGO>`
+/// terms (e.g. `"d58…"^^aff4:MD5`). The sibling predicates `aff4:imageStreamHash`
+/// / `aff4:imageStreamIndexHash` hash the *stored* bevy and index, not the
+/// reconstructed content, and are intentionally excluded.
+fn parse_image_hashes(block: &str) -> Vec<crate::StoredHash> {
+    let tokens: Vec<&str> = block.split_whitespace().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i] != "aff4:hash" {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        while j < tokens.len() {
+            match tokens[j] {
+                "," => j += 1,
+                t => match parse_hash_term(t) {
+                    Some(h) => {
+                        out.push(h);
+                        j += 1;
+                    }
+                    None => break,
+                },
+            }
+        }
+        i = j.max(i + 1);
+    }
+    out
+}
+
+/// Parse one `"<hex>"^^aff4:<ALGO>` hash term; `None` if it is not such a term.
+fn parse_hash_term(token: &str) -> Option<crate::StoredHash> {
+    let rest = token.strip_prefix('"')?;
+    let (hex, dtype) = rest.split_once("\"^^aff4:")?;
+    if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(crate::StoredHash {
+        algorithm: dtype.to_string(),
+        hex: hex.to_ascii_lowercase(),
     })
 }
 

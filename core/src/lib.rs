@@ -30,6 +30,21 @@ use zip_core::ZipArchive;
 pub trait ReadSeekSend: Read + Seek + Send + Sync {}
 impl<T: Read + Seek + Send + Sync> ReadSeekSend for T {}
 
+/// A content digest declared on the ImageStream node (`aff4:hash`).
+///
+/// `algorithm` is the RDF datatype as written in the turtle, with the `aff4:`
+/// prefix stripped — e.g. `"SHA512"`, `"MD5"`, `"SHA1"`, `"SHA256"`, `"Blake2b"`.
+/// `hex` is the stored digest, lowercased. These digests cover the decompressed
+/// ImageStream content streamed by [`Aff4Reader::read_image_stream_content`], not
+/// the map-expanded virtual disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredHash {
+    /// Hash algorithm datatype (e.g. `"SHA256"`).
+    pub algorithm: String,
+    /// Stored digest as lowercase hex.
+    pub hex: String,
+}
+
 /// A read-only AFF4 disk image reader.
 ///
 /// Implements [`Read`] and [`Seek`] over the virtual disk address space.
@@ -40,9 +55,13 @@ pub struct Aff4Reader {
     /// ZIP entry prefix for the `aff4:ImageStream` bevies.
     zip_base: String,
     virtual_size: u64,
+    /// Decompressed length of the ImageStream content (its own `aff4:size`).
+    image_stream_size: u64,
     chunk_size: u64,
     chunks_per_segment: u64,
     compression: Compression,
+    /// Content digests declared on the ImageStream node (`aff4:hash`).
+    image_hashes: Vec<StoredHash>,
     pos: u64,
     /// Loaded map for Map-backed images; `None` for direct ImageStreams.
     loaded_map: Option<LoadedMap>,
@@ -132,9 +151,11 @@ impl Aff4Reader {
             archive,
             zip_base,
             virtual_size: meta.virtual_size,
+            image_stream_size: meta.image_stream_size,
             chunk_size: meta.chunk_size,
             chunks_per_segment: meta.chunks_per_segment,
             compression: meta.compression,
+            image_hashes: meta.image_hashes,
             pos: 0,
             loaded_map,
         })
@@ -146,6 +167,53 @@ impl Aff4Reader {
     /// ImageStream's physical data size.
     pub fn virtual_disk_size(&self) -> u64 {
         self.virtual_size
+    }
+
+    /// Decompressed length of the underlying `aff4:ImageStream` content.
+    ///
+    /// This is the ImageStream's own `aff4:size`, distinct from
+    /// [`Self::virtual_disk_size`] (the map-expanded virtual disk). It is the
+    /// number of bytes the ImageStream `aff4:hash` digests cover.
+    pub fn image_stream_size(&self) -> u64 {
+        self.image_stream_size
+    }
+
+    /// Content digests declared on the ImageStream node (`aff4:hash`).
+    ///
+    /// Each covers the decompressed ImageStream content (see
+    /// [`Self::read_image_stream_content`]). Empty when the turtle declares none.
+    pub fn stored_image_hashes(&self) -> &[StoredHash] {
+        &self.image_hashes
+    }
+
+    /// Stream the decompressed `aff4:ImageStream` content, in chunk order, to
+    /// `sink` — the exact byte sequence the ImageStream `aff4:hash` digests cover.
+    ///
+    /// Feeds at most [`Self::image_stream_size`] bytes (the final chunk is
+    /// truncated to the declared size). Use this to recompute and verify the
+    /// stored content hashes without materialising the whole stream.
+    ///
+    /// # Errors
+    /// [`Aff4Error`] if a chunk cannot be located or decompressed.
+    pub fn read_image_stream_content(
+        &mut self,
+        mut sink: impl FnMut(&[u8]),
+    ) -> Result<(), Aff4Error> {
+        if self.chunk_size == 0 {
+            // Unreachable: open() rejects chunk_size == 0. Guards div_ceil panic.
+            return Err(Aff4Error::BadFormat("aff4:chunkSize must be > 0".into()));
+        }
+        let total = self.image_stream_size;
+        let n_chunks = total.div_ceil(self.chunk_size);
+        let mut produced = 0u64;
+        for idx in 0..n_chunks {
+            let chunk = self.read_chunk(idx)?;
+            let remaining = total - produced;
+            let take = (chunk.len() as u64).min(remaining) as usize;
+            sink(&chunk[..take]);
+            produced += take as u64;
+        }
+        Ok(())
     }
 
     /// Read a single chunk by its absolute index across all bevies.
