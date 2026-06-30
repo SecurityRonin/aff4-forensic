@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "aff4"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "flate2",
  "lz4_flex",
@@ -31,6 +31,20 @@ dependencies = [
  "thiserror",
  "zip",
  "zip-forensic-core",
+]
+
+[[package]]
+name = "aff4-forensic"
+version = "0.1.0"
+dependencies = [
+ "aff4",
+ "blake2",
+ "forensicnomicon",
+ "md-5",
+ "sha1",
+ "sha2",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -74,6 +88,15 @@ name = "bitflags"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
+
+[[package]]
+name = "blake2"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
+dependencies = [
+ "digest",
+]
 
 [[package]]
 name = "block-buffer"
@@ -270,6 +293,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "forensicnomicon"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13ea57940d412ccc3f6b75d1ff6e1d295f8394dd1559783c7bd45049316b0ca4"
+dependencies = [
+ "forensicnomicon-core",
+ "forensicnomicon-data",
+]
+
+[[package]]
+name = "forensicnomicon-core"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5d5b96ffd37d1e758a1657839de8b4d5e7bfc024a5500509d07ff7acd7b9461"
+
+[[package]]
+name = "forensicnomicon-data"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "664814f07d95790e9c38a9c2c3a0a5539ba4e1ef8e4de72cf32424fc397364ba"
+dependencies = [
+ "forensicnomicon-core",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -408,6 +456,16 @@ checksum = "297e814c836ae64db86b36cf2a557ba54368d03f6afcd7d947c266692f71115e"
 dependencies = [
  "byteorder",
  "crc",
+]
+
+[[package]]
+name = "md-5"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+dependencies = [
+ "cfg-if",
+ "digest",
 ]
 
 [[package]]
@@ -656,6 +714,17 @@ name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures",

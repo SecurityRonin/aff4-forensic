@@ -1,24 +1,39 @@
 [workspace]
 resolver = "2"
-members = ["aff4"]
+members = ["core", "forensic"]
+# cargo-fuzz packages carry their own [workspace]; keep them out of this one.
+exclude = ["fuzz", "core/fuzz", "forensic/fuzz"]
 
-# Single source of truth for fields shared by every member (DRY): bump version /
-# MSRV / license here once; members inherit via `field.workspace = true`.
+# Single source of truth for fields shared by every member (DRY). NOTE: `version`
+# is NOT hoisted — the reader (core, package `aff4`) and the analyzer (forensic,
+# `aff4-forensic`) are versioned independently, so each keeps its own `version`
+# (mirrors ewf-forensic: core 0.4.0 / forensic 0.5.0).
 [workspace.package]
-version = "0.1.2"
 edition = "2021"
 rust-version = "1.85"
 license = "Apache-2.0"
 authors = ["Albert Hui"]
+repository = "https://github.com/SecurityRonin/aff4-forensic"
+homepage = "https://github.com/SecurityRonin/aff4-forensic"
 
 # Single source of truth for dependency versions (DRY): declare each once;
-# members write `dep.workspace = true`.
+# members write `dep.workspace = true`. The inter-crate `aff4` (the reader) is a
+# path dep within the workspace and a registry version for publish — the analyzer
+# (forensic) depends on it (or, per the fleet principle, may parse lower-level).
 [workspace.dependencies]
+aff4 = { path = "core", version = "0.1.2" }
 thiserror = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 zip-forensic-core = "0.1"
 flate2 = "1"
 snap = "1"
 lz4_flex = "0.11"
+# Shared forensic report model — the analyzer emits forensicnomicon::report::Finding.
+forensicnomicon = "1"
+# Hashing for the integrity audit (RustCrypto — never hand-rolled).
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+blake2 = "0.10"
 tempfile = "3"
 proptest = "1"

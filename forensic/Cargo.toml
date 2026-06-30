@@ -1,0 +1,40 @@
+# aff4-forensic — the AFF4 ANALYZER (integrity audit + structural anomalies),
+# layered over the `aff4` reader (core/). SCAFFOLD: see ../HANDOFF.md.
+[package]
+name         = "aff4-forensic"
+version      = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description  = "AFF4 forensic analyzer — image-hash integrity verification and structural anomaly detection over the aff4 reader"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords     = ["forensics", "aff4", "integrity", "dfir"]
+categories   = ["parser-implementations"]
+
+[lib]
+name = "aff4_forensic"
+
+[dependencies]
+aff4 = { workspace = true }
+forensicnomicon = { workspace = true }
+thiserror = { workspace = true }
+# Hashing for the integrity audit (RustCrypto — NEVER hand-rolled). Wired in by
+# the handoff's §1 (hash verification); declared here so they're ready.
+md-5  = { workspace = true }
+sha1  = { workspace = true }
+sha2  = { workspace = true }
+blake2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all      = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"

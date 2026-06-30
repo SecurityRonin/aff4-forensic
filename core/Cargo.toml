@@ -1,7 +1,9 @@
 [package]
 name         = "aff4"
-version.workspace = true
+version      = "0.1.2"
 edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
 rust-version.workspace = true
 description  = "Pure-Rust read-only AFF4 (Advanced Forensic Format 4) disk image reader"
 license.workspace = true
