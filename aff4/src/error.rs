@@ -6,7 +6,7 @@ pub enum Aff4Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("ZIP error: {0}")]
-    Zip(#[from] zip::result::ZipError),
+    Zip(#[from] zip_core::ZipCoreError),
     #[error("not a valid AFF4 image: {0}")]
     BadFormat(String),
 }

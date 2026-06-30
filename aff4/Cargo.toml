@@ -16,6 +16,7 @@ test-helpers = []
 [dependencies]
 thiserror = { workspace = true }
 zip       = { workspace = true }
+zip-forensic-core = { workspace = true }
 flate2    = { workspace = true }
 snap      = { workspace = true }
 lz4_flex  = { workspace = true }

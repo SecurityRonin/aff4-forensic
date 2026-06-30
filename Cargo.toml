@@ -5,7 +5,7 @@ members = ["aff4"]
 # Single source of truth for fields shared by every member (DRY): bump version /
 # MSRV / license here once; members inherit via `field.workspace = true`.
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -15,7 +15,8 @@ authors = ["Albert Hui"]
 # members write `dep.workspace = true`.
 [workspace.dependencies]
 thiserror = "2"
-zip = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+zip-forensic-core = "0.1"
 flate2 = "1"
 snap = "1"
 lz4_flex = "0.11"

@@ -20,7 +20,7 @@ use meta::{parse_turtle, Compression};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
-use zip::ZipArchive;
+use zip_core::ZipArchive;
 
 /// A seekable, thread-safe byte source the AFF4 container ZIP can sit on: a
 /// `File`, an in-RAM `Cursor`, or a positioned sub-range of an outer `.zip`.
