@@ -32,8 +32,9 @@ pub enum Aff4Anomaly {
         stored: String,
         computed: String,
     },
-    /// The image data could not be fully read while hashing (read-error region).
-    HashUnreadable { offset: u64 },
+    /// A virtual region was marked `aff4:UnreadableData` — the acquisition could
+    /// not read those bytes, so whole-disk integrity cannot be established there.
+    HashUnreadable { offset: u64, length: u64 },
 }
 
 impl Observation for Aff4Anomaly {
@@ -68,10 +69,10 @@ impl Observation for Aff4Anomaly {
                  over the ImageStream content ({computed}) — consistent with tampering or media \
                  corruption"
             ),
-            Aff4Anomaly::HashUnreadable { offset } => format!(
-                "the image marks a region unreadable at virtual offset {offset} \
-                 (aff4:UnreadableData); those bytes could not be acquired, so whole-image \
-                 integrity cannot be fully verified"
+            Aff4Anomaly::HashUnreadable { offset, length } => format!(
+                "{length} bytes at virtual offset {offset} are marked \
+                 aff4:UnreadableData; those bytes could not be acquired, so whole-disk \
+                 integrity cannot be fully established over that region"
             ),
         }
     }
@@ -110,6 +111,15 @@ pub fn audit_image(path: &Path) -> Result<Vec<Finding>, Aff4Error> {
 /// # Errors
 /// [`Aff4Error`] if the ImageStream content cannot be read.
 fn verify_image_hashes(reader: &mut Aff4Reader) -> Result<Vec<Aff4Anomaly>, Aff4Error> {
+    let mut anomalies = Vec::new();
+
+    // Regions the acquisition could not read (aff4:UnreadableData) — an integrity
+    // caveat independent of the content-hash check, reported even when no
+    // recomputable hash is declared.
+    for (offset, length) in reader.unreadable_regions() {
+        anomalies.push(Aff4Anomaly::HashUnreadable { offset, length });
+    }
+
     let stored: Vec<StoredHash> = reader.stored_image_hashes().to_vec();
     let mut jobs: Vec<(StoredHash, Hasher)> = stored
         .into_iter()
@@ -117,7 +127,7 @@ fn verify_image_hashes(reader: &mut Aff4Reader) -> Result<Vec<Aff4Anomaly>, Aff4
         .collect();
 
     if jobs.is_empty() {
-        return Ok(Vec::new());
+        return Ok(anomalies);
     }
 
     reader.read_image_stream_content(|chunk| {
@@ -126,7 +136,6 @@ fn verify_image_hashes(reader: &mut Aff4Reader) -> Result<Vec<Aff4Anomaly>, Aff4
         }
     })?;
 
-    let mut anomalies = Vec::new();
     for (stored, hasher) in jobs {
         let computed = hasher.finalize_hex();
         if computed != stored.hex {

@@ -80,6 +80,23 @@ pub(crate) struct LoadedMap {
     pub gap_default: TargetKind,
 }
 
+impl LoadedMap {
+    /// Virtual `(offset, length)` regions backed by `aff4:UnreadableData` — bytes
+    /// the acquisition could not read. Returned in `map_offset` order.
+    pub(crate) fn unreadable_regions(&self) -> Vec<(u64, u64)> {
+        self.entries
+            .iter()
+            .filter(|e| {
+                matches!(
+                    self.targets.get(e.target_id as usize),
+                    Some(TargetKind::Tile(Tile::Unreadable))
+                )
+            })
+            .map(|e| (e.map_offset, e.length))
+            .collect()
+    }
+}
+
 /// Parse the binary `/map` file into a sorted, filtered entry list.
 pub(crate) fn parse_map_entries(data: &[u8]) -> Vec<MapEntry> {
     let n = data.len() / ENTRY_SIZE;

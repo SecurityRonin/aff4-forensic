@@ -186,6 +186,19 @@ impl Aff4Reader {
         &self.image_hashes
     }
 
+    /// Virtual `(offset, length)` regions the acquisition could not read
+    /// (`aff4:UnreadableData` map targets), in offset order.
+    ///
+    /// Empty for a fully-imaged image or a direct (non-Map) ImageStream. These
+    /// regions read back as the `UNREADABLEDATA` fill, so whole-disk integrity
+    /// cannot be fully established over them.
+    pub fn unreadable_regions(&self) -> Vec<(u64, u64)> {
+        self.loaded_map
+            .as_ref()
+            .map(LoadedMap::unreadable_regions)
+            .unwrap_or_default()
+    }
+
     /// Stream the decompressed `aff4:ImageStream` content, in chunk order, to
     /// `sink` — the exact byte sequence the ImageStream `aff4:hash` digests cover.
     ///
