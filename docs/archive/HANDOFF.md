@@ -1,5 +1,15 @@
 # `aff4-forensic` — Implementation Handoff
 
+> **ARCHIVED — implemented 2026-06-30.** All four gaps (§1 hash verification, §2
+> symbolic/"allocated" maps, §3 AFF4-L, §4 encryption detect-and-refuse) are
+> done via strict RED→GREEN TDD, plus a foundational bevy-index fix (the index is
+> 12-byte `(offset, length)`, not 4-byte cumulative ends — the reader mis-read
+> every real image before it). Tier-1 validated against pyaff4 + Evimetry's stored
+> hashes. Current-state docs: [`core/docs/corpus-validation.md`](../../core/docs/corpus-validation.md)
+> and [`forensic/docs/validation.md`](../../forensic/docs/validation.md). Kept for
+> historical reference; the sections below describe the original (pre-implementation)
+> plan and its starting assumptions, some of which the implementation corrected.
+
 **Status: RESTRUCTURED + SCAFFOLDED.** The published `aff4` reader was moved here
 and split into the fleet `core/` + `forensic/` shape (like `ewf-forensic`). The
 reader (`core/`, package `aff4`, published 0.1.2) is complete for the common case;
