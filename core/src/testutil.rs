@@ -7,6 +7,15 @@ use zip::CompressionMethod;
 /// Virtual chunk size used in test fixtures.
 pub const CHUNK_SIZE: usize = 512;
 
+/// Encode one AFF4 Standard v1.0 bevy-index entry: `(u64 byte_offset, u32 length)`
+/// little-endian — the chunk's position and stored size within the bevy segment.
+fn index_entry(offset: u64, length: u32) -> [u8; 12] {
+    let mut e = [0u8; 12];
+    e[0..8].copy_from_slice(&offset.to_le_bytes());
+    e[8..12].copy_from_slice(&length.to_le_bytes());
+    e
+}
+
 const STREAM_ARN: &str = "aff4://issen-test-stream";
 const MAP_ARN: &str = "aff4://issen-test-map";
 const IMAGE_STREAM_ARN: &str = "aff4://issen-test-image-stream";
@@ -33,7 +42,8 @@ pub fn test_aff4_with_geometry(chunk_size: u64, chunks_per_segment: u64) -> Vec<
     let mut zw = ZipWriter::new(cursor);
     let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
-    zw.start_file("information.turtle", opts).expect("start turtle");
+    zw.start_file("information.turtle", opts)
+        .expect("start turtle");
     zw.write_all(turtle.as_bytes()).expect("write turtle");
 
     zw.start_file(format!("{ZIP_BASE}/00000000").as_str(), opts)
@@ -42,7 +52,7 @@ pub fn test_aff4_with_geometry(chunk_size: u64, chunks_per_segment: u64) -> Vec<
 
     zw.start_file(format!("{ZIP_BASE}/00000000.index").as_str(), opts)
         .expect("start index");
-    zw.write_all(&512u32.to_le_bytes()).expect("write index");
+    zw.write_all(&index_entry(0, 512)).expect("write index");
 
     zw.finish().expect("finish zip").into_inner()
 }
@@ -69,7 +79,8 @@ pub fn test_aff4(data: &[u8]) -> Vec<u8> {
     let mut zw = ZipWriter::new(cursor);
     let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
-    zw.start_file("information.turtle", opts).expect("start turtle");
+    zw.start_file("information.turtle", opts)
+        .expect("start turtle");
     zw.write_all(turtle.as_bytes()).expect("write turtle");
 
     let bevy_name = format!("{ZIP_BASE}/00000000");
@@ -77,9 +88,10 @@ pub fn test_aff4(data: &[u8]) -> Vec<u8> {
     zw.write_all(&chunk).expect("write bevy");
 
     let index_name = format!("{ZIP_BASE}/00000000.index");
-    zw.start_file(index_name.as_str(), opts).expect("start index");
-    let end_offset: u32 = CHUNK_SIZE as u32;
-    zw.write_all(&end_offset.to_le_bytes()).expect("write index");
+    zw.start_file(index_name.as_str(), opts)
+        .expect("start index");
+    zw.write_all(&index_entry(0, CHUNK_SIZE as u32))
+        .expect("write index");
 
     zw.finish().expect("finish zip").into_inner()
 }
@@ -116,7 +128,8 @@ pub fn test_aff4_lz4(data: &[u8]) -> Vec<u8> {
     let mut zw = ZipWriter::new(cursor);
     let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
-    zw.start_file("information.turtle", opts).expect("start turtle");
+    zw.start_file("information.turtle", opts)
+        .expect("start turtle");
     zw.write_all(turtle.as_bytes()).expect("write turtle");
 
     let bevy_name = format!("{ZIP_BASE}/00000000");
@@ -124,8 +137,10 @@ pub fn test_aff4_lz4(data: &[u8]) -> Vec<u8> {
     zw.write_all(&compressed).expect("write bevy");
 
     let index_name = format!("{ZIP_BASE}/00000000.index");
-    zw.start_file(index_name.as_str(), opts).expect("start index");
-    zw.write_all(&(compressed.len() as u32).to_le_bytes()).expect("write index");
+    zw.start_file(index_name.as_str(), opts)
+        .expect("start index");
+    zw.write_all(&index_entry(0, compressed.len() as u32))
+        .expect("write index");
 
     zw.finish().expect("finish zip").into_inner()
 }
@@ -166,8 +181,8 @@ pub fn test_aff4_map(data: &[u8]) -> Vec<u8> {
     let mut map_bin = Vec::with_capacity(28);
     map_bin.extend_from_slice(&512u64.to_le_bytes()); // map_offset
     map_bin.extend_from_slice(&512u64.to_le_bytes()); // length
-    map_bin.extend_from_slice(&0u64.to_le_bytes());   // target_offset
-    map_bin.extend_from_slice(&0u32.to_le_bytes());   // target_id (index into idx file)
+    map_bin.extend_from_slice(&0u64.to_le_bytes()); // target_offset
+    map_bin.extend_from_slice(&0u32.to_le_bytes()); // target_id (index into idx file)
 
     let idx = format!("{IMAGE_STREAM_ARN}\n");
 
@@ -175,60 +190,26 @@ pub fn test_aff4_map(data: &[u8]) -> Vec<u8> {
     let mut zw = ZipWriter::new(cursor);
     let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
 
-    zw.start_file("information.turtle", opts).expect("start turtle");
+    zw.start_file("information.turtle", opts)
+        .expect("start turtle");
     zw.write_all(turtle.as_bytes()).expect("write turtle");
 
-    zw.start_file(&format!("{IMAGE_ZIP_BASE}/00000000"), opts).expect("start bevy");
+    zw.start_file(&format!("{IMAGE_ZIP_BASE}/00000000"), opts)
+        .expect("start bevy");
     zw.write_all(&chunk).expect("write bevy");
 
-    zw.start_file(&format!("{IMAGE_ZIP_BASE}/00000000.index"), opts).expect("start index");
-    zw.write_all(&(CHUNK_SIZE as u32).to_le_bytes()).expect("write index");
+    zw.start_file(&format!("{IMAGE_ZIP_BASE}/00000000.index"), opts)
+        .expect("start index");
+    zw.write_all(&index_entry(0, CHUNK_SIZE as u32))
+        .expect("write index");
 
-    zw.start_file(&format!("{MAP_ZIP_BASE}/map"), opts).expect("start map");
+    zw.start_file(&format!("{MAP_ZIP_BASE}/map"), opts)
+        .expect("start map");
     zw.write_all(&map_bin).expect("write map");
 
-    zw.start_file(&format!("{MAP_ZIP_BASE}/idx"), opts).expect("start idx");
+    zw.start_file(&format!("{MAP_ZIP_BASE}/idx"), opts)
+        .expect("start idx");
     zw.write_all(idx.as_bytes()).expect("write idx");
-
-    zw.finish().expect("finish zip").into_inner()
-}
-
-/// Build a minimal AFF4 image using the Scudette/aff4-imager start-offset index format.
-///
-/// Unlike the Evimetry format (cumulative end-offsets, `index[0] != 0`), the
-/// Scudette format stores START offsets: `index[i]` = byte start of chunk i, and
-/// `index[chunks_per_segment]` = total bevy size. This means `index[0] == 0` always.
-pub fn test_aff4_scudette(data: &[u8]) -> Vec<u8> {
-    let mut chunk = vec![0u8; CHUNK_SIZE];
-    let n = data.len().min(CHUNK_SIZE);
-    chunk[..n].copy_from_slice(&data[..n]);
-
-    let turtle = format!(
-        "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n\
-         @prefix aff4: <http://aff4.org/Schema#> .\n\
-         <{STREAM_ARN}> rdf:type aff4:ImageStream ; \
-         aff4:size {CHUNK_SIZE} ; \
-         aff4:chunkSize {CHUNK_SIZE} ; \
-         aff4:chunksInSegment 1 ; \
-         aff4:compressionMethod aff4:NullCompressor .\n"
-    );
-
-    let cursor = std::io::Cursor::new(Vec::<u8>::new());
-    let mut zw = ZipWriter::new(cursor);
-    let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-
-    zw.start_file("information.turtle", opts).expect("start turtle");
-    zw.write_all(turtle.as_bytes()).expect("write turtle");
-
-    let bevy_name = format!("{ZIP_BASE}/00000000");
-    zw.start_file(bevy_name.as_str(), opts).expect("start bevy");
-    zw.write_all(&chunk).expect("write bevy");
-
-    // Scudette index: [start_0, end_0] = [0, CHUNK_SIZE]
-    let index_name = format!("{ZIP_BASE}/00000000.index");
-    zw.start_file(index_name.as_str(), opts).expect("start index");
-    zw.write_all(&0u32.to_le_bytes()).expect("write index start");
-    zw.write_all(&(CHUNK_SIZE as u32).to_le_bytes()).expect("write index end");
 
     zw.finish().expect("finish zip").into_inner()
 }

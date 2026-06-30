@@ -108,9 +108,7 @@ pub(crate) struct ResolvedRegion {
 /// start (or `virtual_size`).
 pub(crate) fn resolve(map: &LoadedMap, virtual_pos: u64, virtual_size: u64) -> ResolvedRegion {
     // Binary search: find the last entry whose map_offset <= virtual_pos.
-    let idx = map
-        .entries
-        .partition_point(|e| e.map_offset <= virtual_pos);
+    let idx = map.entries.partition_point(|e| e.map_offset <= virtual_pos);
 
     if idx > 0 {
         let e = &map.entries[idx - 1];

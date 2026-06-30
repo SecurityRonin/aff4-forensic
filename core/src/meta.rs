@@ -49,7 +49,13 @@ pub(crate) fn parse_turtle(turtle: &str) -> Result<StreamMeta, Aff4Error> {
     // pair is whitespace-separated with blocks delimited by " . ".
     let normalized: String = turtle
         .chars()
-        .map(|c| if matches!(c, '\n' | '\r' | '\t' | ';') { ' ' } else { c })
+        .map(|c| {
+            if matches!(c, '\n' | '\r' | '\t' | ';') {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect();
 
     let blocks: Vec<&str> = normalized.split(" . ").collect();
@@ -75,8 +81,9 @@ fn parse_map_turtle(blocks: &[&str], map_block: &str) -> Result<StreamMeta, Aff4
 
     let virtual_size = extract_pred_u64(map_block, "aff4:size")?;
 
-    let dep_arn = extract_pred_iri(map_block, "aff4:dependentStream")
-        .ok_or_else(|| Aff4Error::BadFormat("aff4:dependentStream not found in Map block".into()))?;
+    let dep_arn = extract_pred_iri(map_block, "aff4:dependentStream").ok_or_else(|| {
+        Aff4Error::BadFormat("aff4:dependentStream not found in Map block".into())
+    })?;
 
     let gap_is_symbolic_ff = map_block.contains("SymbolicStreamFF");
 
@@ -117,7 +124,9 @@ fn parse_image_stream_block(
         return Err(Aff4Error::BadFormat("aff4:chunkSize must be > 0".into()));
     }
     if chunks_per_segment == 0 {
-        return Err(Aff4Error::BadFormat("aff4:chunksInSegment must be > 0".into()));
+        return Err(Aff4Error::BadFormat(
+            "aff4:chunksInSegment must be > 0".into(),
+        ));
     }
 
     let compression = detect_compression(block);
@@ -189,5 +198,7 @@ pub(crate) fn extract_pred_u64(block: &str, predicate: &str) -> Result<u64, Aff4
             });
         }
     }
-    Err(Aff4Error::BadFormat(format!("{predicate} not found in block")))
+    Err(Aff4Error::BadFormat(format!(
+        "{predicate} not found in block"
+    )))
 }

@@ -156,10 +156,9 @@ impl Aff4Reader {
         let segment_name = format!("{}/{:08x}", self.zip_base, segment_idx);
         let index_name = format!("{}.index", segment_name);
 
-        // Bevy index: format-dependent (see chunk_bounds_from_index).
+        // Bevy index: 12-byte (offset, length) entries (see chunk_bounds_from_index).
         let index_data = self.read_zip_entry_bytes(&index_name)?;
-        let (chunk_start, chunk_end) =
-            chunk_bounds_from_index(&index_data, chunk_in_seg, self.chunks_per_segment)?;
+        let (chunk_start, chunk_end) = chunk_bounds_from_index(&index_data, chunk_in_seg)?;
 
         // Sparse chunk: 0-byte index entry means virtual zeros.
         if chunk_start == chunk_end {
@@ -176,6 +175,13 @@ impl Aff4Reader {
         }
 
         let compressed = &bevy_data[chunk_start..chunk_end];
+
+        // AFF4 rule: a chunk whose stored size equals chunk_size was written
+        // uncompressed (compression did not shrink it), regardless of the stream's
+        // declared compressionMethod. Decompressing it would fail or corrupt.
+        if compressed.len() == self.chunk_size as usize {
+            return Ok(compressed.to_vec());
+        }
 
         match &self.compression {
             Compression::Null => Ok(compressed.to_vec()),
@@ -299,61 +305,37 @@ impl Seek for Aff4Reader {
     }
 }
 
-/// Decode chunk byte bounds from a bevy index.
+/// Decode a chunk's `(start, end)` byte bounds within its bevy segment.
 ///
-/// Two index formats exist:
-/// - **Evimetry** (AFF4 Standard v1.0): `index[i]` = cumulative END byte of chunk i.
-///   Array length = `chunks_per_segment × 4` bytes.
-/// - **Scudette / aff4-imager**: `index[i]` = START byte of chunk i;
-///   `index[chunks_per_segment]` = total bevy size.
-///   Array length = `(chunks_per_segment + 1) × 4` bytes.
-///
-/// The length discriminator is reliable: the two formats differ by exactly one entry.
-fn chunk_bounds_from_index(
-    index: &[u8],
-    chunk_in_seg: u64,
-    chunks_per_segment: u64,
-) -> Result<(usize, usize), Aff4Error> {
-    let idx = chunk_in_seg as usize;
-    let n = chunks_per_segment as usize;
-    let entry_size = 4usize;
+/// AFF4 Standard v1.0 bevy index (`<bevy>.index`): a packed array of 12-byte
+/// little-endian entries, one per chunk in the segment —
+/// `(u64 byte_offset, u32 length)` giving the chunk's position and stored
+/// (possibly compressed) size inside the bevy. A zero-length entry marks a
+/// sparse (all-zero) chunk. Verified by reproducing Evimetry's stored
+/// `aff4:hash` digests over the reconstructed ImageStream content.
+fn chunk_bounds_from_index(index: &[u8], chunk_in_seg: u64) -> Result<(usize, usize), Aff4Error> {
+    const ENTRY_SIZE: usize = 12;
+    let base = (chunk_in_seg as usize)
+        .checked_mul(ENTRY_SIZE)
+        .ok_or_else(|| Aff4Error::BadFormat("bevy index offset overflow".into()))?;
+    let entry = index.get(base..base + ENTRY_SIZE).ok_or_else(|| {
+        Aff4Error::BadFormat(format!("bevy index too small for chunk {chunk_in_seg}"))
+    })?;
 
-    fn read_u32(data: &[u8], byte_offset: usize) -> u32 {
-        u32::from_le_bytes([
-            data[byte_offset],
-            data[byte_offset + 1],
-            data[byte_offset + 2],
-            data[byte_offset + 3],
-        ])
-    }
-
-    // Scudette: (n+1) entries; Evimetry: n entries.
-    let scudette = index.len() == (n + 1) * entry_size;
-
-    if scudette {
-        if (idx + 2) * entry_size > index.len() {
-            return Err(Aff4Error::BadFormat(format!(
-                "bevy index (Scudette) too small for chunk {idx}"
-            )));
-        }
-        let start = read_u32(index, idx * entry_size) as usize;
-        let end = read_u32(index, (idx + 1) * entry_size) as usize;
-        Ok((start, end))
-    } else {
-        // Evimetry: need entry [idx].
-        if (idx + 1) * entry_size > index.len() {
-            return Err(Aff4Error::BadFormat(format!(
-                "bevy index too small for chunk {idx}"
-            )));
-        }
-        let end = read_u32(index, idx * entry_size) as usize;
-        let start = if idx == 0 {
-            0
-        } else {
-            read_u32(index, (idx - 1) * entry_size) as usize
-        };
-        Ok((start, end))
-    }
+    let offset = u64::from_le_bytes(
+        entry[0..8]
+            .try_into()
+            .map_err(|_| Aff4Error::BadFormat("bevy index entry truncated".into()))?,
+    ) as usize;
+    let length = u32::from_le_bytes(
+        entry[8..12]
+            .try_into()
+            .map_err(|_| Aff4Error::BadFormat("bevy index entry truncated".into()))?,
+    ) as usize;
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| Aff4Error::BadFormat("bevy chunk bounds overflow".into()))?;
+    Ok((offset, end))
 }
 
 #[cfg(test)]
@@ -405,26 +387,6 @@ mod tests {
             buf, [0xCCu8; 512],
             "LZ4-compressed chunk must be decompressed; without LZ4 support, \
              raw frame bytes are returned instead of [0xCC; 512]"
-        );
-    }
-
-    // ── Scudette/aff4-imager start-offset bevy index format ──────────────────
-    //
-    // aff4-imager (Scudette) writes index[i] = START byte of chunk i, with
-    // index[n] = total bevy size. This means index[0] == 0 always.
-    // Evimetry writes index[i] = END byte (cumulative), so index[0] != 0.
-    // Without detection, the Scudette first chunk is misread as sparse (start==end==0).
-    #[test]
-    fn scudette_index_format_reads_data_not_zeros() {
-        let img = testutil::test_aff4_scudette(&[0xBBu8; 512]);
-        let f = write_tmp(&img);
-        let mut reader = Aff4Reader::open(f.path()).expect("open scudette aff4");
-        let mut buf = [0u8; 512];
-        reader.read_exact(&mut buf).expect("read");
-        assert_eq!(
-            buf, [0xBBu8; 512],
-            "Scudette index format (index[0]==0) must be detected and read correctly; \
-             without detection, chunk 0 is misidentified as sparse and returns zeros"
         );
     }
 
@@ -530,24 +492,37 @@ mod tests {
         assert_send::<Aff4Reader>();
     }
 
+    /// Build a bevy index of 12-byte `(u64 offset, u32 length)` entries.
+    fn build_index(entries: &[(u64, u32)]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(entries.len() * 12);
+        for &(off, len) in entries {
+            v.extend_from_slice(&off.to_le_bytes());
+            v.extend_from_slice(&len.to_le_bytes());
+        }
+        v
+    }
+
     #[test]
     fn chunk_bounds_from_index_single_chunk() {
-        // Evimetry: 1 entry (chunks_per_segment=1), index[0] = end of chunk 0.
-        let end_offset: u32 = 512;
-        let index = end_offset.to_le_bytes().to_vec();
-        let (start, end) = chunk_bounds_from_index(&index, 0, 1).expect("bounds");
+        // One 12-byte entry: chunk 0 at offset 0, length 512.
+        let index = build_index(&[(0, 512)]);
+        let (start, end) = chunk_bounds_from_index(&index, 0).expect("bounds");
         assert_eq!((start, end), (0, 512));
     }
 
     #[test]
     fn chunk_bounds_from_index_second_chunk() {
-        // Evimetry: 2 entries (chunks_per_segment=2).
-        let index: Vec<u8> = [100u32, 220u32]
-            .iter()
-            .flat_map(|v| v.to_le_bytes())
-            .collect();
-        let (start, end) = chunk_bounds_from_index(&index, 1, 2).expect("bounds");
+        // Chunk 1 sits at offset 100 with length 120 → bounds (100, 220).
+        let index = build_index(&[(0, 100), (100, 120)]);
+        let (start, end) = chunk_bounds_from_index(&index, 1).expect("bounds");
         assert_eq!((start, end), (100, 220));
+    }
+
+    #[test]
+    fn chunk_bounds_from_index_out_of_range_errs() {
+        // Index covers one chunk; asking for chunk 5 must error, not panic.
+        let index = build_index(&[(0, 512)]);
+        assert!(chunk_bounds_from_index(&index, 5).is_err());
     }
 
     // ── Map stream support ────────────────────────────────────────────────────
