@@ -20,7 +20,7 @@ pub use crypto::{decrypt_encrypted_stream, decrypt_reader};
 pub use error::Aff4Error;
 pub use logical::{LogicalContainer, LogicalEntry};
 use map::{parse_idx, parse_map_entries, resolve, LoadedMap, TargetKind};
-use meta::{parse_turtle, Compression};
+use meta::{parse_logical_files, parse_turtle, Compression};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -47,6 +47,46 @@ pub struct StoredHash {
     pub algorithm: String,
     /// Stored digest as lowercase hex.
     pub hex: String,
+}
+
+/// The kind of AFF4 container, determined from `information.turtle` without
+/// fully opening the image — cheap enough for filesystem detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerKind {
+    /// A disk image (`aff4:ImageStream` / `aff4:Map`) — read via [`Aff4Reader`].
+    Disk,
+    /// An AFF4-Logical file collection (`aff4:FileImage`) — read via
+    /// [`LogicalContainer`].
+    Logical,
+    /// An encrypted container (`aff4:EncryptedStream`); the inner shape is
+    /// hidden behind the ciphertext and needs a password to open.
+    Encrypted,
+}
+
+/// Classify an AFF4 container by reading its `information.turtle` once.
+///
+/// A lightweight probe for detection: it loads no streams and decrypts nothing.
+/// Returns [`Aff4Error::BadFormat`] if the file is not an AFF4 container (no
+/// readable `information.turtle` describing a known shape).
+pub fn container_kind(path: &Path) -> Result<ContainerKind, Aff4Error> {
+    let mut archive = ZipArchive::new(Box::new(File::open(path)?) as Box<dyn ReadSeekSend>)?;
+    let turtle = {
+        let mut entry = archive.by_name("information.turtle")?;
+        let mut content = String::new();
+        entry.read_to_string(&mut content)?;
+        content
+    };
+    // AFF4-Logical is identified by one or more aff4:FileImage nodes.
+    if !parse_logical_files(&turtle)?.is_empty() {
+        return Ok(ContainerKind::Logical);
+    }
+    // Otherwise it is a disk image: parse_turtle resolves an aff4:ImageStream /
+    // aff4:Map, and returns Aff4Error::Encrypted for an aff4:EncryptedStream.
+    match parse_turtle(&turtle) {
+        Ok(_) => Ok(ContainerKind::Disk),
+        Err(Aff4Error::Encrypted(_)) => Ok(ContainerKind::Encrypted),
+        Err(e) => Err(e),
+    }
 }
 
 /// A read-only AFF4 disk image reader.
@@ -459,6 +499,41 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().expect("tempfile");
         f.write_all(data).expect("write");
         f
+    }
+
+    #[test]
+    fn container_kind_classifies_disk_image() {
+        let f = write_tmp(&testutil::test_aff4(&[0u8; 512]));
+        assert_eq!(container_kind(f.path()).unwrap(), ContainerKind::Disk);
+    }
+
+    #[test]
+    fn container_kind_classifies_logical() {
+        let content = b"logical file body\n";
+        let md5 = format!("{:x}", md5::Md5::digest(content));
+        let f = write_tmp(&testutil::test_aff4_logical("dir/a.txt", content, &md5));
+        assert_eq!(container_kind(f.path()).unwrap(), ContainerKind::Logical);
+    }
+
+    #[test]
+    fn container_kind_classifies_encrypted() {
+        let f = write_tmp(&testutil::test_aff4_encrypted());
+        assert_eq!(container_kind(f.path()).unwrap(), ContainerKind::Encrypted);
+    }
+
+    #[test]
+    fn container_kind_rejects_non_aff4() {
+        // A ZIP with no information.turtle is not an AFF4 container.
+        let mut buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(std::io::Cursor::new(&mut buf));
+            zw.start_file("random.txt", SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(b"nope").unwrap();
+            zw.finish().unwrap();
+        }
+        let f = write_tmp(&buf);
+        assert!(container_kind(f.path()).is_err());
     }
 
     // ── Panic regression tests (RED until meta.rs validates chunk geometry) ───

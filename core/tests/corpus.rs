@@ -8,7 +8,7 @@
 //! - URL-encoded ZIP entry names (`aff4%3A%2F%2F{uuid}/00000000`)
 //! - Snappy-compressed chunks (all reference images use Snappy)
 //! - Sparse chunks (index entries with 0 bytes = virtual zeros)
-use aff4::Aff4Reader;
+use aff4::{container_kind, Aff4Reader, ContainerKind};
 use md5::Digest as _;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -25,6 +25,17 @@ fn corpus(name: &str) -> std::path::PathBuf {
 /// The Map declares `aff4:size 268435456` (256 MiB — the actual virtual disk size).
 /// The inner `aff4:ImageStream` declares `aff4:size 3964928` (physical data size).
 /// `virtual_disk_size()` must return the Map's size.
+/// The Evimetry reference disk images classify as `ContainerKind::Disk`
+/// straight from `information.turtle` (tier-1, real reference data).
+#[test]
+fn corpus_base_linear_is_disk() {
+    let path = corpus("Base-Linear.aff4");
+    if !path.exists() {
+        return;
+    }
+    assert_eq!(container_kind(&path).unwrap(), ContainerKind::Disk);
+}
+
 #[test]
 fn corpus_base_linear_virtual_disk_size() {
     let path = corpus("Base-Linear.aff4");
