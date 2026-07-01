@@ -49,6 +49,29 @@ pub struct StoredHash {
     pub hex: String,
 }
 
+/// The kind of AFF4 container, determined from `information.turtle` without
+/// fully opening the image — cheap enough for filesystem detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerKind {
+    /// A disk image (`aff4:ImageStream` / `aff4:Map`) — read via [`Aff4Reader`].
+    Disk,
+    /// An AFF4-Logical file collection (`aff4:FileImage`) — read via
+    /// [`LogicalContainer`].
+    Logical,
+    /// An encrypted container (`aff4:EncryptedStream`); the inner shape is
+    /// hidden behind the ciphertext and needs a password to open.
+    Encrypted,
+}
+
+/// Classify an AFF4 container by reading its `information.turtle` once.
+///
+/// A lightweight probe for detection: it loads no streams and decrypts nothing.
+/// Returns [`Aff4Error::BadFormat`] if the file is not an AFF4 container (no
+/// readable `information.turtle` describing a known shape).
+pub fn container_kind(path: &Path) -> Result<ContainerKind, Aff4Error> {
+    unimplemented!()
+}
+
 /// A read-only AFF4 disk image reader.
 ///
 /// Implements [`Read`] and [`Seek`] over the virtual disk address space.
@@ -459,6 +482,41 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().expect("tempfile");
         f.write_all(data).expect("write");
         f
+    }
+
+    #[test]
+    fn container_kind_classifies_disk_image() {
+        let f = write_tmp(&testutil::test_aff4(&[0u8; 512]));
+        assert_eq!(container_kind(f.path()).unwrap(), ContainerKind::Disk);
+    }
+
+    #[test]
+    fn container_kind_classifies_logical() {
+        let content = b"logical file body\n";
+        let md5 = format!("{:x}", md5::Md5::digest(content));
+        let f = write_tmp(&testutil::test_aff4_logical("dir/a.txt", content, &md5));
+        assert_eq!(container_kind(f.path()).unwrap(), ContainerKind::Logical);
+    }
+
+    #[test]
+    fn container_kind_classifies_encrypted() {
+        let f = write_tmp(&testutil::test_aff4_encrypted());
+        assert_eq!(container_kind(f.path()).unwrap(), ContainerKind::Encrypted);
+    }
+
+    #[test]
+    fn container_kind_rejects_non_aff4() {
+        // A ZIP with no information.turtle is not an AFF4 container.
+        let mut buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(std::io::Cursor::new(&mut buf));
+            zw.start_file("random.txt", SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(b"nope").unwrap();
+            zw.finish().unwrap();
+        }
+        let f = write_tmp(&buf);
+        assert!(container_kind(f.path()).is_err());
     }
 
     // ── Panic regression tests (RED until meta.rs validates chunk geometry) ───
