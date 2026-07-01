@@ -52,3 +52,36 @@ AFF4L_DREAM=$PWD/dream.aff4 cargo test -p aff4 --test corpus aff4l_dream
 
 The test skips cleanly when `AFF4L_DREAM` is unset.
 
+## Encrypted AFF4 (AES-XTS password-wrapped keybag)
+
+`encrypted-linear-password.aff4` — a minted encrypted logical container used as the
+Tier-2 oracle for the AES-XTS decrypt path (`aff4:EncryptedStream`).
+
+- **Source:** minted with pyaff4 0.34 (Apache-2.0, the reference implementation),
+  `container.Container.createURN(..., encryption=True)` +
+  `keybag.PasswordWrappedKeyBag`. No pre-made encrypted reference image ships in
+  any public AFF4 corpus (encrypted containers are user-generated), so this one is
+  generated deterministically-shaped from a known password + known plaintext.
+- **Password:** `password`
+- **Plaintext (`hello.txt`, 8192 bytes):** repeated ASCII pattern
+  `AFF4-ORACLE-PLAINTEXT page=NNNN ` packed 64 bytes/line;
+  MD5 `fedd7baa1fdf87bb8c12b18ad59ba738`,
+  SHA-256 `89a031c7328f5d20bd98ebb7076e96e84d5778d049a849b4e8066a5409a904ed`.
+- **Container size:** 10,974 bytes; container MD5 `7900ca1fcc6b78c3142f6ec11dcc8091`.
+- **Keybag parameters (verbatim from the embedded `information.turtle`):**
+  PBKDF2-HMAC-SHA256, `iterations 147256`, `keySizeInBytes 32`,
+  `salt a1d8a5a9d81b3a9010ab4e60ee1b3b83` (16 bytes),
+  `wrappedKey 334f04929581baa280c53a8666826796114f34c625162fc0c1721d83e337b720debb3bdcdacb4fea`
+  (RFC 3394 AES key-wrap, default IV `0xA6A6A6A6A6A6A6A6`),
+  `chunkSize 512`, `chunksInSegment 2048`.
+- **Structure:** the outer `aff4:EncryptedStream` plaintext is *itself* an inner
+  AFF4 ZIP volume; `hello.txt` lives inside that inner volume. Decrypting the
+  EncryptedStream bevy yields the inner ZIP.
+- **XTS:** VEK (32 bytes) = full XTS key `key1||key2` (each 16 bytes → AES-128-XTS);
+  per-512-byte-chunk tweak = `struct.pack("<Q", chunk_id) + b"\x00"*8` where
+  `chunk_id = bevy_index * chunks_per_segment + chunk_index`.
+- **Use case:** Tier-2 validation of the Rust AES-XTS EncryptedStream decrypt.
+  Round-trip confirmed with pyaff4, and independently cross-checked with a
+  from-scratch decrypt (PBKDF2 → RFC 3394 unwrap → AES-XTS via the `cryptography`
+  library, not pyaff4's own code path) reproducing the exact `hello.txt` bytes.
+
