@@ -109,8 +109,18 @@ content straight from its ZIP segment. Validated against pyaff4's `dream.aff4`.
 
 ---
 
-## 8. Encryption: detect and refuse
+## 8. Encryption: refuse by default, decrypt with a key
 
-`aff4:EncryptedStream` (AES-XTS, password/cert-wrapped keybag) is detected from the
-turtle and refused with `Aff4Error::Encrypted` — the reader never decodes ciphertext
-as plaintext. Provide-key decryption is a later epic.
+`aff4:EncryptedStream` (AES-XTS, password-wrapped keybag) is **decrypted** with a
+password via `LogicalContainer::open_encrypted` — PBKDF2-HMAC-SHA256 → RFC 3394 key
+unwrap → AES-128-XTS. The passwordless `Aff4Reader::open` still refuses with
+`Aff4Error::Encrypted` (secure-by-default), never decoding ciphertext as plaintext,
+and certificate/public-key keybags are refused as unsupported. See
+`docs/decisions/0002-encrypted-streams-secure-by-default-decryption.md`.
+
+## 9. Container-kind detection
+
+`aff4::container_kind(&Path) -> ContainerKind {Disk, Logical, Encrypted}` classifies
+a container from its `information.turtle` alone (no full reader open), so a consumer
+can dispatch without reaching into the RDF or try/catching openers. See
+`docs/decisions/0004-container-kind-detection-probe.md`.
