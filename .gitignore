@@ -1,6 +1,8 @@
 /target/
 /fuzz/target/
-# Fuzz corpora are large binary test data — gitignored, kept locally / regenerated
-# (fuzz/corpus_reference is ~59 MB of AFF4 reference images). Provenance: TODO.
+# Fuzz corpora are large binary test data — gitignored, kept locally / regenerated.
 /fuzz/corpus/
 /fuzz/corpus_reference/
+# Build/report artifacts (mkdocs site, coverage output) — never committed.
+/site/
+lcov.info
