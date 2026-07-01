@@ -3,7 +3,7 @@
 //! `encrypted-linear-password.aff4` (see tests/data/README.md). Ground truth is
 //! the plaintext MD5, cross-checked independently of pyaff4's own code path.
 
-use aff4::{Aff4Error, LogicalContainer};
+use aff4::{container_kind, Aff4Error, ContainerKind, LogicalContainer};
 use md5::Digest as _;
 use std::path::{Path, PathBuf};
 
@@ -11,6 +11,14 @@ fn data(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/data")
         .join(name)
+}
+
+/// The real encrypted reference container classifies as `Encrypted` from its
+/// outer turtle, without a password (tier-1).
+#[test]
+fn encrypted_container_is_classified_encrypted() {
+    let p = data("encrypted-linear-password.aff4");
+    assert_eq!(container_kind(&p).unwrap(), ContainerKind::Encrypted);
 }
 
 #[test]

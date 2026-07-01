@@ -20,7 +20,7 @@ pub use crypto::{decrypt_encrypted_stream, decrypt_reader};
 pub use error::Aff4Error;
 pub use logical::{LogicalContainer, LogicalEntry};
 use map::{parse_idx, parse_map_entries, resolve, LoadedMap, TargetKind};
-use meta::{parse_turtle, Compression};
+use meta::{parse_logical_files, parse_turtle, Compression};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -69,7 +69,24 @@ pub enum ContainerKind {
 /// Returns [`Aff4Error::BadFormat`] if the file is not an AFF4 container (no
 /// readable `information.turtle` describing a known shape).
 pub fn container_kind(path: &Path) -> Result<ContainerKind, Aff4Error> {
-    unimplemented!()
+    let mut archive = ZipArchive::new(Box::new(File::open(path)?) as Box<dyn ReadSeekSend>)?;
+    let turtle = {
+        let mut entry = archive.by_name("information.turtle")?;
+        let mut content = String::new();
+        entry.read_to_string(&mut content)?;
+        content
+    };
+    // AFF4-Logical is identified by one or more aff4:FileImage nodes.
+    if !parse_logical_files(&turtle)?.is_empty() {
+        return Ok(ContainerKind::Logical);
+    }
+    // Otherwise it is a disk image: parse_turtle resolves an aff4:ImageStream /
+    // aff4:Map, and returns Aff4Error::Encrypted for an aff4:EncryptedStream.
+    match parse_turtle(&turtle) {
+        Ok(_) => Ok(ContainerKind::Disk),
+        Err(Aff4Error::Encrypted(_)) => Ok(ContainerKind::Encrypted),
+        Err(e) => Err(e),
+    }
 }
 
 /// A read-only AFF4 disk image reader.
