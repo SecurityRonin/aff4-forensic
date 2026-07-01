@@ -27,6 +27,12 @@ path  = "fuzz_targets/fuzz_audit.rs"
 test  = false
 doc   = false
 
+[[bin]]
+name  = "fuzz_decrypt"
+path  = "fuzz_targets/fuzz_decrypt.rs"
+test  = false
+doc   = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
 aff4          = { path = "../core" }

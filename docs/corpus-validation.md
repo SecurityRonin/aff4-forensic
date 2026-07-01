@@ -60,9 +60,19 @@ recomputes to that MD5. Env-gated via `AFF4L_DREAM` (see
 
 ## Encryption
 
-`aff4:EncryptedStream` (AES-XTS, wrapped keybag) is detected from the turtle and
-refused with `Aff4Error::Encrypted` — never decoded as plaintext. Predicates
-confirmed against pyaff4 `lexicon.py`. Provide-key decryption is a later epic.
+`aff4:EncryptedStream` decryption is implemented (all RustCrypto, never
+hand-rolled): `LogicalContainer::open_encrypted(path, password)` derives the key
+`PBKDF2-HMAC-SHA256 → RFC 3394 AES key-unwrap`, then AES-128-XTS-decrypts each
+512-byte chunk (little-endian chunk-index tweak) and opens the inner AFF4 volume.
+The passwordless `Aff4Reader::open` still refuses encrypted images by design
+(secure-by-default); decryption is the deliberate, key-bearing opt-in.
+
+Tier-2 validated against `encrypted-linear-password.aff4`: decryption reproduces
+the oracle plaintext MD5 (`fedd7baa1fdf87bb8c12b18ad59ba738`), and the RFC 3394
+integrity check makes a wrong password fail loudly (`Aff4Error::Encrypted`)
+rather than yield garbage. The oracle was minted with pyaff4 and cross-checked by
+an independent from-scratch decrypt (see `tests/data/README.md`). Public-key
+(certificate) keybags are detected and refused as unsupported.
 
 ## Reproducing
 

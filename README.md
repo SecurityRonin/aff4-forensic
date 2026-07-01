@@ -65,6 +65,20 @@ for entry in container.files().to_vec() {
 # Ok::<(), aff4::Aff4Error>(())
 ```
 
+### Decrypt an encrypted container (AES-XTS)
+
+`Aff4Reader::open` refuses encrypted images by design; decryption is the explicit,
+key-bearing path (a wrong password errors, never yields garbage):
+
+```rust
+use aff4::LogicalContainer;
+
+let mut container = LogicalContainer::open_encrypted("secret.aff4".as_ref(), "password")?;
+let files = container.files().to_vec();
+let bytes = container.read_file(&files[0])?;
+# Ok::<(), aff4::Aff4Error>(())
+```
+
 ---
 
 ## Supported features
@@ -81,7 +95,7 @@ for entry in container.files().to_vec() {
 | URL-encoded ZIP entry names (`aff4%3A%2F%2F…`) | ✓ |
 | AFF4-Logical (AFF4-L) file containers | ✓ |
 | `aff4:hash` verification → `AFF4-HASH-MISMATCH` / `-UNREADABLE` | ✓ |
-| Encrypted volumes (`aff4:EncryptedStream`) | detect & refuse |
+| Encrypted volumes (`aff4:EncryptedStream`, AES-XTS + password keybag) | decrypt |
 
 Read-only. Validated Tier-1 against the AFF4 reference corpus and pyaff4 — see the [reader](https://securityronin.github.io/aff4-forensic/corpus-validation/) and [audit](https://securityronin.github.io/aff4-forensic/validation/) validation docs.
 
