@@ -1,6 +1,6 @@
 [package]
 name         = "aff4"
-version      = "0.2.1"
+version      = "0.2.2"
 edition.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -13,12 +13,18 @@ keywords     = ["forensics", "aff4", "disk-image", "container"]
 categories   = ["parser-implementations", "filesystem"]
 
 [features]
-test-helpers = []
+# Exposes the `testutil` fixture builder to downstream test suites. It writes
+# synthetic AFF4 containers with the third-party `zip` writer (zip-forensic-core
+# is read-only), so it — and only it — pulls `zip`.
+test-helpers = ["dep:zip"]
 
 [dependencies]
 thiserror = { workspace = true }
-zip       = { workspace = true }
+# The reader reads through zip-forensic-core (our pure-Rust forensic ZIP reader).
 zip-forensic-core = { workspace = true }
+# Third-party `zip` is a WRITER, needed only to build test fixtures — optional so
+# a normal `aff4` consumer never pulls it (dev-dependency covers our own tests).
+zip       = { workspace = true, optional = true }
 flate2    = { workspace = true }
 snap      = { workspace = true }
 lz4_flex  = { workspace = true }
@@ -34,6 +40,8 @@ tempfile  = { workspace = true }
 proptest  = { workspace = true }
 lz4_flex  = { workspace = true }
 md-5.workspace = true
+# For this crate's own tests (fixture writing); consumers get it only via test-helpers.
+zip       = { workspace = true }
 
 [lints.rust]
 unsafe_code = "deny"
