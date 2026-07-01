@@ -338,3 +338,82 @@ pub(crate) fn extract_pred_u64(block: &str, predicate: &str) -> Result<u64, Aff4
         "{predicate} not found in block"
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_image_stream_is_err() {
+        let err = parse_turtle("<x> rdf:type aff4:Something .").unwrap_err();
+        assert!(matches!(err, Aff4Error::BadFormat(m) if m.contains("ImageStream")));
+    }
+
+    #[test]
+    fn map_without_dependent_stream_is_err() {
+        let t = "<aff4://m> rdf:type aff4:Map ; aff4:size 1024 .";
+        let err = parse_turtle(t).unwrap_err();
+        assert!(matches!(err, Aff4Error::BadFormat(m) if m.contains("dependentStream")));
+    }
+
+    #[test]
+    fn map_with_missing_dependent_image_stream_is_err() {
+        let t = "<aff4://m> rdf:type aff4:Map ; aff4:size 1024 ; \
+                 aff4:dependentStream <aff4://s> .";
+        let err = parse_turtle(t).unwrap_err();
+        assert!(matches!(err, Aff4Error::BadFormat(m) if m.contains("dependent ImageStream")));
+    }
+
+    #[test]
+    fn map_iri_missing_is_err() {
+        // A Map block with no `<...>` subject IRI.
+        let err = parse_turtle("aff4:Map aff4:size 10 .").unwrap_err();
+        assert!(matches!(err, Aff4Error::BadFormat(m) if m.contains("Map IRI")));
+    }
+
+    #[test]
+    fn detect_compression_all_branches() {
+        assert_eq!(detect_compression("x snappy"), Compression::Snappy);
+        assert_eq!(detect_compression("x rfc1950"), Compression::Deflate);
+        assert_eq!(
+            detect_compression("x DeflateCompressor"),
+            Compression::Deflate
+        );
+        assert_eq!(detect_compression("x github.com/lz4"), Compression::Lz4);
+        assert_eq!(detect_compression("x NullCompressor"), Compression::Null);
+    }
+
+    #[test]
+    fn extract_pred_u64_errors() {
+        assert!(extract_pred_u64("aff4:size notanumber", "aff4:size").is_err());
+        assert!(extract_pred_u64("no predicate here", "aff4:size").is_err());
+        // A digit run that overflows u64 hits the parse error branch.
+        assert!(extract_pred_u64("aff4:size 99999999999999999999999999", "aff4:size").is_err());
+    }
+
+    #[test]
+    fn extract_iri_none_when_absent() {
+        assert!(extract_iri("no angle brackets").is_none());
+    }
+
+    #[test]
+    fn extract_pred_iri_none_when_value_not_iri() {
+        // predicate present but the following token is not `<...>`.
+        assert!(extract_pred_iri("aff4:dependentStream plain", "aff4:dependentStream").is_none());
+    }
+
+    #[test]
+    fn parse_hash_term_rejects_non_hash() {
+        assert!(parse_hash_term("notquoted").is_none());
+        assert!(parse_hash_term("\"\"^^aff4:MD5").is_none()); // empty hex
+        assert!(parse_hash_term("\"zz\"^^aff4:MD5").is_none()); // non-hex
+        assert!(parse_hash_term("\"ab\"^^aff4:,").is_none()); // empty algorithm
+    }
+
+    #[test]
+    fn parse_logical_files_empty_when_no_file_image() {
+        assert!(parse_logical_files("<x> rdf:type aff4:ImageStream .")
+            .unwrap()
+            .is_empty());
+    }
+}

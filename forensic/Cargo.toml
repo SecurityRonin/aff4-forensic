@@ -31,6 +31,8 @@ blake2 = { workspace = true }
 tempfile = { workspace = true }
 # Rewriting a reference image (flip one content byte) to drive the tamper test.
 zip = { workspace = true }
+# test-helpers exposes aff4::testutil fixtures (e.g. a no-hash image).
+aff4 = { workspace = true, features = ["test-helpers"] }
 
 [lints.rust]
 unsafe_code = "forbid"

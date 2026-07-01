@@ -212,3 +212,50 @@ fn to_hex(bytes: &[u8]) -> String {
     }
     s
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write as _;
+
+    #[test]
+    fn for_algorithm_maps_supported_and_rejects_unknown() {
+        for a in ["MD5", "sha1", "SHA256", "sha512", "Blake2b"] {
+            assert!(
+                Hasher::for_algorithm(a).is_some(),
+                "{a} should be supported"
+            );
+        }
+        assert!(Hasher::for_algorithm("CRC32").is_none());
+    }
+
+    #[test]
+    fn audit_image_without_hashes_has_no_findings() {
+        // A direct ImageStream image declares no aff4:hash → nothing to verify and
+        // no unreadable regions → empty finding set.
+        let img = aff4::testutil::test_aff4(&[0u8; 512]);
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(&img).unwrap();
+        assert!(audit_image(f.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn anomaly_notes_are_observations() {
+        let mismatch = Aff4Anomaly::HashMismatch {
+            algorithm: "MD5".into(),
+            stored: "aa".into(),
+            computed: "bb".into(),
+        };
+        assert_eq!(mismatch.code(), "AFF4-HASH-MISMATCH");
+        assert!(mismatch.note().contains("consistent with"));
+        let unreadable = Aff4Anomaly::HashUnreadable {
+            offset: 100,
+            length: 512,
+        };
+        assert_eq!(unreadable.code(), "AFF4-HASH-UNREADABLE");
+        assert!(unreadable.note().contains("could not be acquired"));
+        // Observation → Finding conversion (Integrity category).
+        let f = mismatch.to_finding(Source::default());
+        assert_eq!(f.code, "AFF4-HASH-MISMATCH");
+    }
+}

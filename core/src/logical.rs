@@ -156,3 +156,84 @@ fn urlencode_arn(arn: &str) -> String {
     let stripped = arn.strip_prefix("aff4://").unwrap_or(arn);
     format!("aff4%3A%2F%2F{stripped}")
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use md5::Digest as _;
+    use std::io::Write as _;
+    use zip::write::{SimpleFileOptions, ZipWriter};
+    use zip::CompressionMethod;
+
+    fn write_tmp(data: &[u8]) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(data).unwrap();
+        f
+    }
+
+    /// A minimal zip with just an `information.turtle` (no FileImage segments).
+    fn zip_with_turtle(turtle: &str) -> Vec<u8> {
+        let cursor = std::io::Cursor::new(Vec::<u8>::new());
+        let mut zw = ZipWriter::new(cursor);
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        zw.start_file("information.turtle", opts).unwrap();
+        zw.write_all(turtle.as_bytes()).unwrap();
+        zw.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn open_disk_image_as_logical_is_err() {
+        // A disk-image turtle has no aff4:FileImage nodes.
+        let img = crate::testutil::test_aff4(&[0u8; 512]);
+        let f = write_tmp(&img);
+        let err = LogicalContainer::open(f.path()).unwrap_err();
+        assert!(matches!(err, Aff4Error::BadFormat(m) if m.contains("FileImage")));
+    }
+
+    #[test]
+    fn file_image_without_segment_is_err() {
+        // FileImage node whose ARN path tail names a segment absent from the zip.
+        let turtle = "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n\
+             @prefix aff4: <http://aff4.org/Schema#> .\n\
+             <aff4://vol/missing.txt> rdf:type aff4:FileImage ; aff4:size 3 .\n";
+        let f = write_tmp(&zip_with_turtle(turtle));
+        let err = LogicalContainer::open(f.path()).unwrap_err();
+        assert!(matches!(err, Aff4Error::BadFormat(m) if m.contains("no matching ZIP segment")));
+    }
+
+    #[test]
+    fn debug_impl_renders() {
+        let md5 = format!("{:x}", md5::Md5::digest(b"hi"));
+        let img = crate::testutil::test_aff4_logical("f.txt", b"hi", &md5);
+        let f = write_tmp(&img);
+        let container = LogicalContainer::open(f.path()).unwrap();
+        assert!(format!("{container:?}").contains("LogicalContainer"));
+    }
+
+    #[test]
+    fn resolve_segment_branches() {
+        let names = vec![
+            "dir/dream.txt".to_string(),
+            "aff4%3A%2F%2Fu/enc.txt".to_string(),
+        ];
+        // Direct path-tail (leading-slash stripped) match.
+        assert_eq!(
+            resolve_segment(&names, "aff4://vol/dir/dream.txt").as_deref(),
+            Some("dir/dream.txt")
+        );
+        // URL-encoded candidate match.
+        assert_eq!(
+            resolve_segment(&names, "aff4://u/enc.txt").as_deref(),
+            Some("aff4%3A%2F%2Fu/enc.txt")
+        );
+        // ARN with no path component: tail is the whole authority; no match.
+        assert!(resolve_segment(&names, "aff4://noslash").is_none());
+        // Suffix fallback: a container-relative prefix on the entry name.
+        let pref = vec!["a/b/c/dream.txt".to_string()];
+        assert_eq!(
+            resolve_segment(&pref, "aff4://vol/dream.txt").as_deref(),
+            Some("a/b/c/dream.txt")
+        );
+    }
+}

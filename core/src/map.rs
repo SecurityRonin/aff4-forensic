@@ -203,3 +203,81 @@ pub(crate) fn resolve(map: &LoadedMap, virtual_pos: u64, virtual_size: u64) -> R
         bytes_in_region: bytes_in_gap,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unreadable_tile_bytes() {
+        // "UNREADABLEDATA" (14 bytes) tiled with the 1 MiB seam.
+        let t = Tile::Unreadable;
+        assert_eq!(t.seed(), b"UNREADABLEDATA");
+        let head: Vec<u8> = (0..14).map(|i| t.byte_at(i)).collect();
+        assert_eq!(head, b"UNREADABLEDATA");
+        // Seam: position 1 MiB resets to seed[0] = 'U'.
+        assert_eq!(t.byte_at(1024 * 1024), b'U');
+    }
+
+    #[test]
+    fn classify_target_variants() {
+        let arn = "aff4://image-stream";
+        assert_eq!(classify_target(arn, arn), TargetKind::ImageStream);
+        assert_eq!(
+            classify_target("http://aff4.org/Schema#Zero", arn),
+            TargetKind::Fill(0x00)
+        );
+        assert_eq!(
+            classify_target("http://aff4.org/Schema#SymbolicStream61", arn),
+            TargetKind::Fill(0x61)
+        );
+        assert_eq!(
+            classify_target("http://aff4.org/Schema#UnknownData", arn),
+            TargetKind::Tile(Tile::Unknown)
+        );
+        assert_eq!(
+            classify_target("http://aff4.org/Schema#UnreadableData", arn),
+            TargetKind::Tile(Tile::Unreadable)
+        );
+        // Unrecognised target (and a SymbolicStream with a non-hex suffix) → Unknown.
+        assert_eq!(
+            classify_target("aff4://some-other-stream", arn),
+            TargetKind::Unknown
+        );
+        assert_eq!(
+            classify_target("http://aff4.org/Schema#SymbolicStreamZZ", arn),
+            TargetKind::Unknown
+        );
+    }
+
+    #[test]
+    fn symbolic_stream_byte_afflib_form() {
+        // afflib-2012 form: `…/SymbolicStream#FF`.
+        assert_eq!(
+            symbolic_stream_byte("http://afflib.org/2012/SymbolicStream#FF"),
+            Some(0xFF)
+        );
+        assert_eq!(symbolic_stream_byte("no symbolic here"), None);
+    }
+
+    #[test]
+    fn resolve_inside_entry_and_gap_after_entry() {
+        let map = LoadedMap {
+            entries: vec![MapEntry {
+                map_offset: 0,
+                length: 256,
+                target_offset: 0,
+                target_id: 0,
+            }],
+            targets: vec![TargetKind::ImageStream],
+            gap_default: TargetKind::Fill(0x00),
+        };
+        // Inside the entry.
+        let inside = resolve(&map, 100, 1024);
+        assert_eq!(inside.kind, TargetKind::ImageStream);
+        assert_eq!(inside.target_offset, 100);
+        // A gap that begins AFTER the entry ends (idx > 0 but past the entry).
+        let gap = resolve(&map, 300, 1024);
+        assert_eq!(gap.kind, TargetKind::Fill(0x00));
+    }
+}

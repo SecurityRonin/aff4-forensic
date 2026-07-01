@@ -215,7 +215,8 @@ impl Aff4Reader {
         mut sink: impl FnMut(&[u8]),
     ) -> Result<(), Aff4Error> {
         if self.chunk_size == 0 {
-            // Unreachable: open() rejects chunk_size == 0. Guards div_ceil panic.
+            // cov:unreachable: open() rejects chunk_size == 0 (meta.rs), so this is
+            // never hit; kept as a defensive guard against a future div_ceil panic.
             return Err(Aff4Error::BadFormat("aff4:chunkSize must be > 0".into()));
         }
         let total = self.image_stream_size;
@@ -367,6 +368,9 @@ impl Read for Aff4Reader {
                 let n = to_read.min(available);
 
                 if n == 0 {
+                    // cov:unreachable: the caller only reaches this arm with a
+                    // non-empty region and in-bounds offset, so n > 0 here; kept as
+                    // a defensive short-circuit against a future zero-length read.
                     return Ok(0);
                 }
 
@@ -724,6 +728,188 @@ mod tests {
             buf, [0xDDu8; 512],
             "virtual bytes 512..1023 map to the ImageStream and must return ImageStream data"
         );
+    }
+
+    /// Build a single-segment image from an explicit turtle, bevy base, bevy bytes
+    /// and 12-byte-entry index bytes.
+    fn build_image(turtle: &str, base: &str, bevy: &[u8], index: &[u8]) -> Vec<u8> {
+        use zip::CompressionMethod;
+        let cursor = Cursor::new(Vec::<u8>::new());
+        let mut zw = ZipWriter::new(cursor);
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        zw.start_file("information.turtle", opts).expect("turtle");
+        zw.write_all(turtle.as_bytes()).expect("write turtle");
+        zw.start_file(format!("{base}/00000000").as_str(), opts)
+            .expect("bevy");
+        zw.write_all(bevy).expect("write bevy");
+        zw.start_file(format!("{base}/00000000.index").as_str(), opts)
+            .expect("index");
+        zw.write_all(index).expect("write index");
+        zw.finish().expect("finish").into_inner()
+    }
+
+    fn index12(offset: u64, length: u32) -> Vec<u8> {
+        let mut v = offset.to_le_bytes().to_vec();
+        v.extend_from_slice(&length.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn debug_impl_renders() {
+        let img = testutil::test_aff4(&[0u8; 512]);
+        let f = write_tmp(&img);
+        let reader = Aff4Reader::open(f.path()).expect("open");
+        assert!(format!("{reader:?}").contains("Aff4Reader"));
+    }
+
+    #[test]
+    fn seek_before_start_is_err() {
+        let img = testutil::test_aff4(&[0u8; 512]);
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open");
+        assert!(reader.seek(SeekFrom::Current(-1)).is_err());
+    }
+
+    #[test]
+    fn deflate_chunk_reads_decompressed() {
+        let chunk = [0x7Au8; 512];
+        let mut compressed = Vec::new();
+        {
+            let mut enc =
+                flate2::write::ZlibEncoder::new(&mut compressed, flate2::Compression::default());
+            enc.write_all(&chunk).expect("zlib");
+            enc.finish().expect("finish");
+        }
+        let turtle = "@prefix aff4: <http://aff4.org/Schema#> .\n\
+             <aff4://s> rdf:type aff4:ImageStream ; aff4:size 512 ; aff4:chunkSize 512 ; \
+             aff4:chunksInSegment 1 ; aff4:compressionMethod aff4:DeflateCompressor .\n";
+        let img = build_image(
+            turtle,
+            "s",
+            &compressed,
+            &index12(0, compressed.len() as u32),
+        );
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open deflate");
+        let mut buf = [0u8; 512];
+        reader.read_exact(&mut buf).expect("read");
+        assert_eq!(buf, [0x7Au8; 512]);
+    }
+
+    #[test]
+    fn map_gap_symbolic_ff_reads_0xff() {
+        // A Map whose gap default is SymbolicStreamFF: the [0,512) gap reads 0xFF.
+        let turtle = "@prefix aff4: <http://aff4.org/Schema#> .\n\
+             <aff4://img> rdf:type aff4:ImageStream ; aff4:size 512 ; aff4:chunkSize 512 ; \
+             aff4:chunksInSegment 1 ; aff4:compressionMethod aff4:NullCompressor .\n\
+             <aff4://map> rdf:type aff4:Map ; aff4:size 1024 ; \
+             aff4:dependentStream <aff4://img> ; \
+             aff4:mapGapDefaultStream aff4:SymbolicStreamFF .\n";
+        // Reuse build_image for the image stream, then add the map/idx entries.
+        use zip::CompressionMethod;
+        let cursor = Cursor::new(Vec::<u8>::new());
+        let mut zw = ZipWriter::new(cursor);
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        zw.start_file("information.turtle", opts).expect("turtle");
+        zw.write_all(turtle.as_bytes()).expect("w");
+        zw.start_file("img/00000000", opts).expect("bevy");
+        zw.write_all(&[0xDDu8; 512]).expect("w");
+        zw.start_file("img/00000000.index", opts).expect("idx");
+        zw.write_all(&index12(0, 512)).expect("w");
+        // Map entry: virtual [512,1024) -> image offset 0, target_id 0.
+        let mut map_bin = 512u64.to_le_bytes().to_vec();
+        map_bin.extend_from_slice(&512u64.to_le_bytes());
+        map_bin.extend_from_slice(&0u64.to_le_bytes());
+        map_bin.extend_from_slice(&0u32.to_le_bytes());
+        zw.start_file("map/map", opts).expect("map");
+        zw.write_all(&map_bin).expect("w");
+        zw.start_file("map/idx", opts).expect("idxf");
+        zw.write_all(b"aff4://img\n").expect("w");
+        let img = zw.finish().expect("finish").into_inner();
+
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open map-ff");
+        let mut buf = [0u8; 512];
+        reader.read_exact(&mut buf).expect("read gap");
+        assert_eq!(buf, [0xFFu8; 512], "SymbolicStreamFF gap must read 0xFF");
+    }
+
+    #[test]
+    fn chunk_bounds_exceeding_bevy_is_err() {
+        // Index claims a chunk longer than the bevy segment → BadFormat on read.
+        let turtle = "@prefix aff4: <http://aff4.org/Schema#> .\n\
+             <aff4://s> rdf:type aff4:ImageStream ; aff4:size 512 ; aff4:chunkSize 512 ; \
+             aff4:chunksInSegment 1 ; aff4:compressionMethod aff4:NullCompressor .\n";
+        let img = build_image(turtle, "s", &[0u8; 512], &index12(0, 999_999));
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open");
+        let mut buf = [0u8; 512];
+        assert!(reader.read_exact(&mut buf).is_err());
+    }
+
+    #[test]
+    fn sparse_chunk_reads_zeros() {
+        // A zero-length index entry marks a sparse chunk → chunk_size zeros.
+        let turtle = "@prefix aff4: <http://aff4.org/Schema#> .\n\
+             <aff4://s> rdf:type aff4:ImageStream ; aff4:size 512 ; aff4:chunkSize 512 ; \
+             aff4:chunksInSegment 1 ; aff4:compressionMethod aff4:NullCompressor .\n";
+        let img = build_image(turtle, "s", &[], &index12(0, 0));
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open");
+        let mut buf = [0xABu8; 512];
+        reader.read_exact(&mut buf).expect("read");
+        assert_eq!(buf, [0u8; 512]);
+    }
+
+    #[test]
+    fn null_partial_chunk_reads_stored_bytes() {
+        // A Null chunk whose stored size differs from chunk_size takes the
+        // Compression::Null match arm (not the stored-uncompressed fast path).
+        let turtle = "@prefix aff4: <http://aff4.org/Schema#> .\n\
+             <aff4://s> rdf:type aff4:ImageStream ; aff4:size 100 ; aff4:chunkSize 512 ; \
+             aff4:chunksInSegment 1 ; aff4:compressionMethod aff4:NullCompressor .\n";
+        let img = build_image(turtle, "s", &[0x5Au8; 100], &index12(0, 100));
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open");
+        let mut buf = [0u8; 100];
+        reader.read_exact(&mut buf).expect("read");
+        assert_eq!(buf, [0x5Au8; 100]);
+    }
+
+    #[test]
+    fn unknown_map_target_reads_zeros() {
+        // A map entry pointing at an unrecognised aff4:// stream reads as zeros.
+        let turtle = "@prefix aff4: <http://aff4.org/Schema#> .\n\
+             <aff4://img> rdf:type aff4:ImageStream ; aff4:size 512 ; aff4:chunkSize 512 ; \
+             aff4:chunksInSegment 1 ; aff4:compressionMethod aff4:NullCompressor .\n\
+             <aff4://map> rdf:type aff4:Map ; aff4:size 512 ; \
+             aff4:dependentStream <aff4://img> ; aff4:mapGapDefaultStream aff4:Zero .\n";
+        use zip::CompressionMethod;
+        let cursor = Cursor::new(Vec::<u8>::new());
+        let mut zw = ZipWriter::new(cursor);
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        zw.start_file("information.turtle", opts).expect("t");
+        zw.write_all(turtle.as_bytes()).expect("w");
+        zw.start_file("img/00000000", opts).expect("b");
+        zw.write_all(&[0xDDu8; 512]).expect("w");
+        zw.start_file("img/00000000.index", opts).expect("i");
+        zw.write_all(&index12(0, 512)).expect("w");
+        // Map entry [0,512) → target_id 0, which the idx maps to an unknown stream.
+        let mut map_bin = 0u64.to_le_bytes().to_vec();
+        map_bin.extend_from_slice(&512u64.to_le_bytes());
+        map_bin.extend_from_slice(&0u64.to_le_bytes());
+        map_bin.extend_from_slice(&0u32.to_le_bytes());
+        zw.start_file("map/map", opts).expect("m");
+        zw.write_all(&map_bin).expect("w");
+        zw.start_file("map/idx", opts).expect("x");
+        zw.write_all(b"aff4://an-unknown-stream\n").expect("w");
+        let img = zw.finish().expect("finish").into_inner();
+
+        let f = write_tmp(&img);
+        let mut reader = Aff4Reader::open(f.path()).expect("open");
+        let mut buf = [0xFFu8; 512];
+        reader.read_exact(&mut buf).expect("read");
+        assert_eq!(buf, [0u8; 512], "unknown map target must read as zeros");
     }
 
     // ── Property tests: open() never panics on arbitrary input ────────────────
