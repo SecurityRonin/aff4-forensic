@@ -254,7 +254,9 @@ pub(crate) fn parse_logical_files(turtle: &str) -> Result<Vec<LogicalFileMeta>, 
         }
         let arn = extract_iri(block)
             .ok_or_else(|| Aff4Error::BadFormat("FileImage node has no IRI subject".into()))?;
-        let size = extract_pred_u64(block, "aff4:size")?;
+        // `aff4:size` is authoritative when present, but some producers omit it
+        // (the ZIP segment length is the real content size); default to 0 then.
+        let size = extract_pred_u64(block, "aff4:size").unwrap_or(0);
         let original_file_name =
             extract_pred_quoted(block, "aff4:originalFileName").unwrap_or_else(|| arn.clone());
         let hashes = parse_image_hashes(block);
@@ -268,6 +270,99 @@ pub(crate) fn parse_logical_files(turtle: &str) -> Result<Vec<LogicalFileMeta>, 
         });
     }
     Ok(out)
+}
+
+/// Parsed metadata for an `aff4:EncryptedStream` and its password-wrapped keybag.
+pub(crate) struct EncryptedMeta {
+    /// The EncryptedStream IRI (its bevies hold the ciphertext chunks).
+    pub stream_arn: String,
+    /// Chunks per bevy segment — maps a per-segment chunk to its global index.
+    pub chunks_per_segment: u64,
+    /// Plaintext length of the decrypted stream (`aff4:size`).
+    pub size: u64,
+    /// PBKDF2 salt (decoded from `xsd:hexBinary`).
+    pub salt: Vec<u8>,
+    /// PBKDF2 iteration count.
+    pub iterations: u32,
+    /// Derived-key size in bytes (`aff4:keySizeInBytes`, 32 for AES-128-XTS).
+    pub key_size: usize,
+    /// RFC 3394-wrapped volume encryption key (decoded from `xsd:hexBinary`).
+    pub wrapped_key: Vec<u8>,
+}
+
+/// Parse an `aff4:EncryptedStream` + its `aff4:PasswordWrappedKeyBag` from the
+/// turtle. Errors if the container is not password-wrapped (e.g. a public-key
+/// keybag) — decryption of those is unsupported.
+pub(crate) fn parse_encrypted_meta(turtle: &str) -> Result<EncryptedMeta, Aff4Error> {
+    let normalized = normalize_turtle(turtle);
+    let blocks: Vec<&str> = normalized.split(" . ").collect();
+
+    let stream_block = blocks
+        .iter()
+        .find(|b| b.contains("aff4:EncryptedStream"))
+        .ok_or_else(|| Aff4Error::BadFormat("no aff4:EncryptedStream in metadata".into()))?;
+    let stream_arn = extract_iri(stream_block)
+        .ok_or_else(|| Aff4Error::BadFormat("EncryptedStream has no IRI".into()))?;
+    let chunk_size = extract_pred_u64(stream_block, "aff4:chunkSize")?;
+    let chunks_per_segment = extract_pred_u64(stream_block, "aff4:chunksInSegment")?;
+    let size = extract_pred_u64(stream_block, "aff4:size")?;
+    if chunk_size == 0 || chunks_per_segment == 0 {
+        return Err(Aff4Error::BadFormat(
+            "EncryptedStream chunk geometry must be > 0".into(),
+        ));
+    }
+    let keybag_arn = extract_pred_iri(stream_block, "aff4:keyBag")
+        .ok_or_else(|| Aff4Error::BadFormat("EncryptedStream has no aff4:keyBag".into()))?;
+
+    let keybag_block = blocks
+        .iter()
+        .find(|b| b.contains(keybag_arn.as_str()) && b.contains("KeyBag"))
+        .ok_or_else(|| Aff4Error::BadFormat(format!("keybag {keybag_arn} not found")))?;
+    if !keybag_block.contains("PasswordWrappedKeyBag") {
+        return Err(Aff4Error::Encrypted(
+            "only password-wrapped keybags are supported (this container uses another keybag type)"
+                .into(),
+        ));
+    }
+
+    let iterations = u32::try_from(extract_pred_u64(keybag_block, "aff4:iterations")?)
+        .map_err(|_| Aff4Error::BadFormat("aff4:iterations out of range".into()))?;
+    let key_size = usize::try_from(extract_pred_u64(keybag_block, "aff4:keySizeInBytes")?)
+        .map_err(|_| Aff4Error::BadFormat("aff4:keySizeInBytes out of range".into()))?;
+    let salt = extract_pred_quoted(keybag_block, "aff4:salt")
+        .and_then(|h| hex_decode(&h))
+        .ok_or_else(|| Aff4Error::BadFormat("aff4:salt missing or not hex".into()))?;
+    let wrapped_key = extract_pred_quoted(keybag_block, "aff4:wrappedKey")
+        .and_then(|h| hex_decode(&h))
+        .ok_or_else(|| Aff4Error::BadFormat("aff4:wrappedKey missing or not hex".into()))?;
+
+    Ok(EncryptedMeta {
+        stream_arn,
+        chunks_per_segment,
+        size,
+        salt,
+        iterations,
+        key_size,
+        wrapped_key,
+    })
+}
+
+/// Decode an even-length ASCII hex string to bytes; `None` on odd length or a
+/// non-hex digit.
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let hi = (bytes[i] as char).to_digit(16)?;
+        let lo = (bytes[i + 1] as char).to_digit(16)?;
+        out.push((hi * 16 + lo) as u8);
+        i += 2;
+    }
+    Some(out)
 }
 
 /// Extract the first quoted string value following `predicate`, handling values
@@ -415,5 +510,77 @@ mod tests {
         assert!(parse_logical_files("<x> rdf:type aff4:ImageStream .")
             .unwrap()
             .is_empty());
+    }
+
+    // ── Encrypted-stream metadata ─────────────────────────────────────────────
+
+    /// A complete, well-formed encrypted turtle with the keybag predicate `kb`
+    /// injected — lets each test omit or corrupt one field.
+    fn enc_turtle(stream_extra: &str, keybag_body: &str) -> String {
+        format!(
+            "<aff4://s> a aff4:EncryptedStream ; aff4:chunkSize 512 ; \
+             aff4:chunksInSegment 2048 ; aff4:size 100 ; aff4:keyBag <aff4://kb> {stream_extra} . \
+             <aff4://kb> a aff4:PasswordWrappedKeyBag ; {keybag_body} ."
+        )
+    }
+
+    fn good_keybag() -> &'static str {
+        "aff4:iterations 1000 ; aff4:keySizeInBytes 32 ; \
+         aff4:salt \"00112233445566778899aabbccddeeff\" ; \
+         aff4:wrappedKey \"00112233445566778899aabbccddeeff0011223344556677\""
+    }
+
+    #[test]
+    fn parse_encrypted_meta_happy() {
+        let m = parse_encrypted_meta(&enc_turtle("", good_keybag())).unwrap();
+        assert_eq!(m.stream_arn, "aff4://s");
+        assert_eq!(m.iterations, 1000);
+        assert_eq!(m.key_size, 32);
+        assert_eq!(m.salt.len(), 16);
+    }
+
+    #[test]
+    fn parse_encrypted_meta_error_paths() {
+        // No EncryptedStream at all.
+        assert!(matches!(
+            parse_encrypted_meta("<x> a aff4:ImageStream ."),
+            Err(Aff4Error::BadFormat(_))
+        ));
+        // Non-password keybag → Encrypted (unsupported).
+        let cert = "<aff4://s> a aff4:EncryptedStream ; aff4:chunkSize 512 ; \
+                    aff4:chunksInSegment 1 ; aff4:size 1 ; aff4:keyBag <aff4://kb> . \
+                    <aff4://kb> a aff4:CertEncryptedKeyBag .";
+        assert!(matches!(
+            parse_encrypted_meta(cert),
+            Err(Aff4Error::Encrypted(_))
+        ));
+        // Missing keyBag predicate.
+        let nokb = "<aff4://s> a aff4:EncryptedStream ; aff4:chunkSize 512 ; \
+                    aff4:chunksInSegment 1 ; aff4:size 1 .";
+        assert!(parse_encrypted_meta(nokb).is_err());
+        // Zero chunk geometry.
+        let zero = "<aff4://s> a aff4:EncryptedStream ; aff4:chunkSize 0 ; \
+                    aff4:chunksInSegment 1 ; aff4:size 1 ; aff4:keyBag <aff4://kb> .";
+        assert!(parse_encrypted_meta(zero).is_err());
+        // Bad hex salt.
+        let badsalt = enc_turtle(
+            "",
+            "aff4:iterations 1 ; aff4:keySizeInBytes 32 ; aff4:salt \"zz\" ; \
+             aff4:wrappedKey \"0011\"",
+        );
+        assert!(parse_encrypted_meta(&badsalt).is_err());
+        // Missing wrappedKey.
+        let nowrap = enc_turtle(
+            "",
+            "aff4:iterations 1 ; aff4:keySizeInBytes 32 ; aff4:salt \"0011\"",
+        );
+        assert!(parse_encrypted_meta(&nowrap).is_err());
+    }
+
+    #[test]
+    fn hex_decode_edges() {
+        assert_eq!(hex_decode("00ff"), Some(vec![0x00, 0xff]));
+        assert!(hex_decode("abc").is_none()); // odd length
+        assert!(hex_decode("zz").is_none()); // non-hex
     }
 }

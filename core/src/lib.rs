@@ -7,6 +7,7 @@
 //! Images may be direct `aff4:ImageStream`s or `aff4:Map`-backed, where a Map
 //! redirects virtual addresses to ImageStream regions, Zero-fill, or SymbolicStreamFF.
 
+mod crypto;
 mod error;
 mod logical;
 mod map;
@@ -15,6 +16,7 @@ mod meta;
 #[cfg(any(test, feature = "test-helpers"))]
 pub mod testutil;
 
+pub use crypto::{decrypt_encrypted_stream, decrypt_reader};
 pub use error::Aff4Error;
 pub use logical::{LogicalContainer, LogicalEntry};
 use map::{parse_idx, parse_map_entries, resolve, LoadedMap, TargetKind};
@@ -302,14 +304,26 @@ impl Aff4Reader {
 ///
 /// Evimetry / aff4-imager URL-encode the IRI: `aff4%3A%2F%2F{uuid}/…`
 /// Synthetic test fixtures use the bare path after stripping `aff4://`.
-fn detect_zip_base(archive: &ZipArchive<Box<dyn ReadSeekSend>>, arn: &str) -> String {
+pub(crate) fn detect_zip_base(archive: &ZipArchive<Box<dyn ReadSeekSend>>, arn: &str) -> String {
     let stripped = arn.strip_prefix("aff4://").unwrap_or(arn);
     let encoded = format!("aff4%3A%2F%2F{stripped}");
-    if archive.file_names().any(|n| n.starts_with(&encoded)) {
-        encoded
-    } else {
-        stripped.to_string()
+    // Producers name the bevy entries three ways: URL-encoded IRI
+    // (Evimetry/aff4-imager), the literal `aff4://uuid` IRI (pyaff4 encrypted),
+    // or the bare path. Prefer whichever the archive actually uses as a `<base>/`
+    // segment prefix; fall back to the bare path for synthetic fixtures.
+    for cand in [encoded.as_str(), arn, stripped] {
+        if archive
+            .file_names()
+            .any(|n| n.starts_with(cand) && n[cand.len()..].starts_with('/'))
+        {
+            return cand.to_string();
+        }
     }
+    // A valid stream's bevies sit under one of the three `<base>/` prefixes above,
+    // so the loop returns; this best-effort default only matters for a turtle whose
+    // stream ARN matches no ZIP entry (a later read then fails with a clear error).
+    // cov:unreachable
+    stripped.to_string()
 }
 
 impl Read for Aff4Reader {
@@ -405,7 +419,10 @@ impl Seek for Aff4Reader {
 /// (possibly compressed) size inside the bevy. A zero-length entry marks a
 /// sparse (all-zero) chunk. Verified by reproducing Evimetry's stored
 /// `aff4:hash` digests over the reconstructed ImageStream content.
-fn chunk_bounds_from_index(index: &[u8], chunk_in_seg: u64) -> Result<(usize, usize), Aff4Error> {
+pub(crate) fn chunk_bounds_from_index(
+    index: &[u8],
+    chunk_in_seg: u64,
+) -> Result<(usize, usize), Aff4Error> {
     const ENTRY_SIZE: usize = 12;
     let base = (chunk_in_seg as usize)
         .checked_mul(ENTRY_SIZE)

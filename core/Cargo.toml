@@ -22,6 +22,12 @@ zip-forensic-core = { workspace = true }
 flate2    = { workspace = true }
 snap      = { workspace = true }
 lz4_flex  = { workspace = true }
+# Encrypted AFF4 decrypt (RustCrypto): PBKDF2 → RFC 3394 unwrap → AES-XTS.
+pbkdf2   = { workspace = true }
+sha2     = { workspace = true }
+aes      = { workspace = true }
+aes-kw   = { workspace = true }
+xts-mode = { workspace = true }
 
 [dev-dependencies]
 tempfile  = { workspace = true }

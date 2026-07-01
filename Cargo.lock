@@ -20,16 +20,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "aes-kw"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69fa2b352dcefb5f7f3a5fb840e02665d311d878955380515e4fd50095dd3d8c"
+dependencies = [
+ "aes",
+]
+
+[[package]]
 name = "aff4"
 version = "0.2.0"
 dependencies = [
+ "aes",
+ "aes-kw",
  "flate2",
  "lz4_flex",
  "md-5",
+ "pbkdf2",
  "proptest",
+ "sha2",
  "snap",
  "tempfile",
  "thiserror",
+ "xts-mode",
  "zip",
  "zip-forensic-core",
 ]
@@ -1005,6 +1019,16 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
+]
+
+[[package]]
+name = "xts-mode"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09cbddb7545ca0b9ffa7bdc653e8743303e1712687a6918ced25f2cdbed42520"
+dependencies = [
+ "byteorder",
+ "cipher",
 ]
 
 [[package]]

@@ -59,6 +59,21 @@ impl LogicalContainer {
         Self::open_reader(Box::new(File::open(path)?))
     }
 
+    /// Open an *encrypted* AFF4-L container: decrypt its `aff4:EncryptedStream`
+    /// with `password`, then open the decrypted inner volume as a logical
+    /// collection.
+    ///
+    /// This is the deliberate, key-bearing counterpart to the passwordless
+    /// [`crate::Aff4Reader::open`], which refuses encrypted images by design.
+    ///
+    /// # Errors
+    /// [`Aff4Error::Encrypted`] for a wrong password or an unsupported keybag;
+    /// otherwise as [`Self::open`] on the decrypted inner volume.
+    pub fn open_encrypted(path: &Path, password: &str) -> Result<Self, Aff4Error> {
+        let inner = crate::decrypt_encrypted_stream(path, password)?;
+        Self::open_reader(Box::new(std::io::Cursor::new(inner)))
+    }
+
     /// Open an AFF4-L container from any seekable byte source.
     ///
     /// # Errors
