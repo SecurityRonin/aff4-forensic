@@ -8,9 +8,12 @@ claim here is reconciled against the AFF4 reference corpus and pyaff4 (see
 
 ## 1. AFF4 is a ZIP container with RDF/Turtle metadata
 
-AFF4 stores forensic images as standard ZIP archives. The metadata is an RDF/Turtle
-document named `information.turtle` inside the ZIP. Disk-image data is stored as
-"bevy" segments:
+AFF4 stores forensic images as standard ZIP archives. The reader reads through
+`zip-forensic-core` (our read-only forensic ZIP reader); the third-party `zip` crate
+is a test-only fixture writer (see
+`docs/decisions/0005-read-via-zip-forensic-core-writer-is-test-only.md`). The metadata
+is an RDF/Turtle document named `information.turtle` inside the ZIP. Disk-image data
+is stored as "bevy" segments:
 
 ```
 {base}/{segment_idx:08x}         ← chunk data for this bevy
