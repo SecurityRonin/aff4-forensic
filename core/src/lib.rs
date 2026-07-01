@@ -215,8 +215,7 @@ impl Aff4Reader {
         mut sink: impl FnMut(&[u8]),
     ) -> Result<(), Aff4Error> {
         if self.chunk_size == 0 {
-            // cov:unreachable: open() rejects chunk_size == 0 (meta.rs), so this is
-            // never hit; kept as a defensive guard against a future div_ceil panic.
+            // cov:unreachable: open() rejects chunk_size == 0 (meta.rs); defensive guard.
             return Err(Aff4Error::BadFormat("aff4:chunkSize must be > 0".into()));
         }
         let total = self.image_stream_size;
@@ -368,9 +367,7 @@ impl Read for Aff4Reader {
                 let n = to_read.min(available);
 
                 if n == 0 {
-                    // cov:unreachable: the caller only reaches this arm with a
-                    // non-empty region and in-bounds offset, so n > 0 here; kept as
-                    // a defensive short-circuit against a future zero-length read.
+                    // cov:unreachable: region non-empty & offset in-bounds ⇒ n > 0.
                     return Ok(0);
                 }
 

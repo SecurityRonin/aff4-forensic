@@ -88,8 +88,11 @@ jobs:
               f="${line#SF:}"
             elif [[ "$line" =~ ^DA:([0-9]+),0$ ]]; then
               n="${BASH_REMATCH[1]}"
-              src="$(sed -n "${n}p" "$f")"
-              if [[ "$src" == *cov:unreachable* ]]; then
+              # The marker may sit on the line itself or the comment directly above
+              # (llvm-cov attributes an unreachable statement's zero-hit to either).
+              src="$(awk -v ln="$n" 'NR==ln' "$f")"
+              prev="$(awk -v ln="$n" 'NR==ln-1' "$f")"
+              if [[ "$src" == *cov:unreachable* || "$prev" == *cov:unreachable* ]]; then
                 echo "exempt (// cov:unreachable): $f:$n"
               else
                 echo "::error::Uncovered line $f:$n:$src"
