@@ -536,6 +536,29 @@ mod tests {
         assert!(container_kind(f.path()).is_err());
     }
 
+    #[test]
+    fn container_kind_errors_on_unclassifiable_turtle() {
+        // A valid AFF4 ZIP whose turtle is neither logical (no aff4:FileImage),
+        // disk (no aff4:ImageStream/Map), nor encrypted — the classifier must
+        // surface the underlying BadFormat, not misclassify it.
+        let mut buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(std::io::Cursor::new(&mut buf));
+            zw.start_file("information.turtle", SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(
+                b"@prefix aff4: <http://aff4.org/Schema#> .\n<aff4://x> a aff4:CaseNotes .\n",
+            )
+            .unwrap();
+            zw.finish().unwrap();
+        }
+        let f = write_tmp(&buf);
+        assert!(matches!(
+            container_kind(f.path()),
+            Err(Aff4Error::BadFormat(_))
+        ));
+    }
+
     // ── Panic regression tests (RED until meta.rs validates chunk geometry) ───
 
     #[test]
