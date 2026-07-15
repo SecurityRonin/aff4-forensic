@@ -16,6 +16,9 @@ mod meta;
 #[cfg(any(test, feature = "test-helpers"))]
 pub mod testutil;
 
+#[cfg(feature = "vfs")]
+pub mod vfs;
+
 pub use crypto::{decrypt_encrypted_stream, decrypt_reader};
 pub use error::Aff4Error;
 pub use logical::{LogicalContainer, LogicalEntry};

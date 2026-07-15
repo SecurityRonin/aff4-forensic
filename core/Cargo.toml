@@ -17,9 +17,14 @@ categories   = ["parser-implementations", "filesystem"]
 # synthetic AFF4 containers with the third-party `zip` writer (zip-forensic-core
 # is read-only), so it — and only it — pulls `zip`.
 test-helpers = ["dep:zip"]
+# forensic-vfs ImageSource contract (optional): present a decoded AFF4 as a
+# read-only positioned-read byte source. Behind the `vfs` feature so a normal
+# aff4 consumer carries no forensic-vfs dependency (ADR 0004).
+vfs = ["dep:forensic-vfs"]
 
 [dependencies]
 thiserror = { workspace = true }
+forensic-vfs = { version = "0.1", optional = true }
 # The reader reads through zip-forensic-core (our pure-Rust forensic ZIP reader).
 zip-forensic-core = { workspace = true }
 # Third-party `zip` is a WRITER, needed only to build test fixtures — optional so
@@ -42,12 +47,6 @@ lz4_flex  = { workspace = true }
 md-5.workspace = true
 # For this crate's own tests (fixture writing); consumers get it only via test-helpers.
 zip       = { workspace = true }
-# forensic-vfs: dev-only — the vfs_image_source integration test verifies that
-# Aff4Reader composes as an Arc<dyn ImageSource>. Published registry dep (portable
-# on a clean checkout / CI). SeekPoolSource is not in 0.1.0, so the test wraps the
-# reader in a local DynWrapper impl'ing ImageSource with the same mutex technique.
-# Zero production impact: aff4 carries NO forensic-vfs production dependency.
-forensic-vfs = "0.1"
 
 [lints.rust]
 unsafe_code = "deny"
