@@ -8,9 +8,10 @@
 //! `Mutex` and serves `read_at` by seeking then reading under the lock — the same
 //! technique the sibling VHD/VHDX/VMDK adapters use. Behind the `vfs` feature.
 
-use std::sync::Mutex;
+use std::io::{Read, Seek, SeekFrom};
+use std::sync::{Mutex, PoisonError};
 
-use forensic_vfs::{ImageSource, VfsResult};
+use forensic_vfs::{ImageSource, VfsError, VfsResult};
 
 use crate::Aff4Reader;
 
@@ -44,9 +45,27 @@ impl ImageSource for Aff4Source {
     }
 
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> VfsResult<usize> {
-        // RED: positioned read not implemented yet.
-        let _ = (offset, buf);
-        Ok(0)
+        let io_err = |op: &'static str| move |source: std::io::Error| VfsError::Io { op, source };
+        let avail = self.len.saturating_sub(offset);
+        if avail == 0 {
+            return Ok(0);
+        }
+        let want = (buf.len() as u64).min(avail) as usize;
+        let mut guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        guard
+            .seek(SeekFrom::Start(offset))
+            .map_err(io_err("aff4::seek"))?;
+        let mut total = 0;
+        while total < want {
+            let Some(slot) = buf.get_mut(total..want) else {
+                break; // cov:unreachable: total < want <= buf.len()
+            };
+            match guard.read(slot).map_err(io_err("aff4::read"))? {
+                0 => break,
+                n => total += n,
+            }
+        }
+        Ok(total)
     }
 }
 
