@@ -60,7 +60,12 @@ impl ImageSource for Aff4Source {
             let Some(slot) = buf.get_mut(total..want) else {
                 break; // cov:unreachable: total < want <= buf.len()
             };
+            // The `0 => break` arm is a defensive short-read guard: want <= len -
+            // offset, so the reader always has `want` bytes before pos reaches
+            // virtual_size, and a mid-loop EOF (read == 0) cannot fire under that
+            // invariant. Kept so a future map/reader change degrades gracefully.
             match guard.read(slot).map_err(io_err("aff4::read"))? {
+                // cov:unreachable: want <= len - offset ⇒ no mid-loop EOF.
                 0 => break,
                 n => total += n,
             }
@@ -114,6 +119,23 @@ mod tests {
         let mut eof = [0u8; 16];
         assert_eq!(
             src.read_at(VIRTUAL_DISK_SIZE, &mut eof).expect("eof read"),
+            0
+        );
+
+        // A buffer larger than the bytes remaining is clamped to `avail`
+        // (want = buf.len().min(len - offset)): the last 8 bytes requested with a
+        // 64-byte buffer return exactly 8, exercising the short-read clamp branch.
+        let mut over = [0u8; 64];
+        assert_eq!(
+            src.read_at(VIRTUAL_DISK_SIZE - 8, &mut over)
+                .expect("straddle-EOF read"),
+            8
+        );
+
+        // A read past EOF beyond the boundary is also 0 (avail == 0 early return).
+        assert_eq!(
+            src.read_at(VIRTUAL_DISK_SIZE + 4096, &mut over)
+                .expect("past-eof read"),
             0
         );
     }
