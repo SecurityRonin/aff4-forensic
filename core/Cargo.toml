@@ -1,6 +1,6 @@
 [package]
 name         = "aff4"
-version      = "0.2.2"
+version      = "0.2.3"
 edition.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -24,7 +24,7 @@ vfs = ["dep:forensic-vfs"]
 
 [dependencies]
 thiserror = { workspace = true }
-forensic-vfs = { version = "0.1", optional = true }
+forensic-vfs = { version = "0.2", optional = true }
 # The reader reads through zip-forensic-core (our pure-Rust forensic ZIP reader).
 zip-forensic-core = { workspace = true }
 # Third-party `zip` is a WRITER, needed only to build test fixtures — optional so

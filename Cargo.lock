@@ -30,11 +30,12 @@ dependencies = [
 
 [[package]]
 name = "aff4"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "aes",
  "aes-kw",
  "flate2",
+ "forensic-vfs",
  "lz4_flex",
  "md-5",
  "pbkdf2",
@@ -307,6 +308,15 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
+name = "forensic-vfs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8684752c5461349ae9464e0aa38ca2b1930be3491f84e11298f4c11b4760ffe"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "forensicnomicon"
