@@ -24,7 +24,7 @@ vfs = ["dep:forensic-vfs"]
 
 [dependencies]
 thiserror = { workspace = true }
-forensic-vfs = { version = "0.2", optional = true }
+forensic-vfs = { version = "0.3", optional = true }
 # The reader reads through zip-forensic-core (our pure-Rust forensic ZIP reader).
 zip-forensic-core = { workspace = true }
 # Third-party `zip` is a WRITER, needed only to build test fixtures — optional so
