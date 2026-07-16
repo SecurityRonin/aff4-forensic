@@ -7,7 +7,7 @@ name: Release
 # already-published version — a tag that bumps only one crate releases only that one.
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]*"]
 
 permissions:
   contents: read
