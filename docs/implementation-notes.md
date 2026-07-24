@@ -2,7 +2,7 @@
 
 Format quirks and empirically verified behaviour, for contributors. Every byte-level
 claim here is reconciled against the AFF4 reference corpus and pyaff4 (see
-[Corpus Validation](corpus-validation.md)).
+[Corpus Validation](validation.md#reader-corpus-validation-tier-1)).
 
 ---
 

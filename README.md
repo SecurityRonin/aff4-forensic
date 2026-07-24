@@ -97,7 +97,7 @@ let bytes = container.read_file(&files[0])?;
 | `aff4:hash` verification → `AFF4-HASH-MISMATCH` / `-UNREADABLE` | ✓ |
 | Encrypted volumes (`aff4:EncryptedStream`, AES-XTS + password keybag) | decrypt |
 
-Read-only. Validated Tier-1 against the AFF4 reference corpus and pyaff4 — see the [reader](https://securityronin.github.io/aff4-forensic/corpus-validation/) and [audit](https://securityronin.github.io/aff4-forensic/validation/) validation docs.
+Read-only. Validated Tier-1 against the AFF4 reference corpus and pyaff4 — see the [reader](https://securityronin.github.io/aff4-forensic/validation/#reader-corpus-validation-tier-1) and [audit](https://securityronin.github.io/aff4-forensic/validation/) validation docs.
 
 ---
 

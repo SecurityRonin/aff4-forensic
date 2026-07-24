@@ -36,8 +36,8 @@ for finding in audit_image("image.aff4".as_ref())? {
 ## Trust
 
 Every byte-level claim is reconciled against the AFF4 reference corpus (Evimetry
-3.0) and pyaff4 — see [Reader Validation](corpus-validation.md) and
-[Audit Validation](validation.md). Findings are observations ("consistent with
+3.0) and pyaff4 — see [Reader Validation](validation.md#reader-corpus-validation-tier-1)
+and [Audit Validation](validation.md). Findings are observations ("consistent with
 tampering or media corruption"), never verdicts — see [Finding Codes](finding-codes.md).
 
 ---
