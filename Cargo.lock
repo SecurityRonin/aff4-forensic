@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "aff4"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "aes",
  "aes-kw",
@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "aff4-forensic"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aff4",
  "blake2",
