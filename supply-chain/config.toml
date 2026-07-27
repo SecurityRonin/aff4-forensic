@@ -39,7 +39,7 @@ version = "0.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.anyhow]]
-version = "1.0.102"
+version = "1.0.104"
 criteria = "safe-to-run"
 
 [[exemptions.autocfg]]
