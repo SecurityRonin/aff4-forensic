@@ -27,7 +27,7 @@ pub struct LogicalEntry {
     pub original_file_name: String,
     /// `aff4:size` — the file's content length in bytes.
     pub size: u64,
-    /// Content digests declared on the FileImage node (`aff4:hash`).
+    /// Content digests declared on the `FileImage` node (`aff4:hash`).
     pub hashes: Vec<StoredHash>,
     /// `aff4:lastWritten`, if present (ISO-8601 as written in the turtle).
     pub last_written: Option<String>,
@@ -43,7 +43,7 @@ impl std::fmt::Debug for LogicalContainer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LogicalContainer")
             .field("files", &self.files.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -135,7 +135,7 @@ impl LogicalContainer {
     }
 }
 
-/// Resolve a FileImage ARN to its ZIP segment entry name.
+/// Resolve a `FileImage` ARN to its ZIP segment entry name.
 ///
 /// The segment is the ARN's path tail (after the `aff4://<uuid>` authority). Real
 /// containers store it either verbatim or URL-encoded; match against the actual
@@ -187,7 +187,7 @@ mod tests {
         f
     }
 
-    /// A minimal zip with just an `information.turtle` (no FileImage segments).
+    /// A minimal zip with just an `information.turtle` (no `FileImage` segments).
     fn zip_with_turtle(turtle: &str) -> Vec<u8> {
         let cursor = std::io::Cursor::new(Vec::<u8>::new());
         let mut zw = ZipWriter::new(cursor);

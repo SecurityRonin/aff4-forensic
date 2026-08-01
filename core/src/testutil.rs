@@ -1,4 +1,13 @@
 //! Test fixture builder for minimal AFF4 images.
+//!
+//! This module writes synthetic containers from in-crate constants; it never
+//! parses evidence. A failure here means the fixture builder itself is broken,
+//! which is exactly the case that should abort the run loudly. This is the
+//! sanctioned test-code exception to the crate's `unwrap_used`/`expect_used`
+//! denies, scoped to this module rather than relaxed workspace-wide — it lives
+//! in `src/` behind the `test-helpers` feature, so a `cfg_attr(test, ...)` on
+//! the crate root does not reach it.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::io::Write as _;
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -57,7 +66,7 @@ pub fn test_aff4_with_geometry(chunk_size: u64, chunks_per_segment: u64) -> Vec<
     zw.finish().expect("finish zip").into_inner()
 }
 
-/// Build a minimal AFF4 image containing one 512-byte chunk (NullCompressor).
+/// Build a minimal AFF4 image containing one 512-byte chunk (`NullCompressor`).
 ///
 /// `data` is padded or truncated to [`CHUNK_SIZE`] bytes.
 pub fn test_aff4(data: &[u8]) -> Vec<u8> {
@@ -249,7 +258,7 @@ pub fn test_aff4_encrypted() -> Vec<u8> {
 /// directly as a named ZIP segment, with `originalFileName`, `aff4:size`, and an
 /// `aff4:hash` (MD5), mirroring pyaff4's `dream.aff4` shape.
 ///
-/// `segment` is the ZIP entry name (also the path tail of the FileImage ARN);
+/// `segment` is the ZIP entry name (also the path tail of the `FileImage` ARN);
 /// `content` is its bytes; `md5_hex` is the stored MD5 digest.
 pub fn test_aff4_logical(segment: &str, content: &[u8], md5_hex: &str) -> Vec<u8> {
     let vol = "aff4://issen-test-logical-volume";
