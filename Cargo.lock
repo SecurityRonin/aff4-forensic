@@ -40,6 +40,7 @@ dependencies = [
  "md-5",
  "pbkdf2",
  "proptest",
+ "safe-read",
  "sha2",
  "snap",
  "tempfile",
@@ -688,6 +689,12 @@ checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
 dependencies = [
  "twox-hash",
 ]
+
+[[package]]
+name = "safe-read"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64d801355149a8e005d4736b4b7c7871e65b5797c31bc9930f5a5483e8368a47"
 
 [[package]]
 name = "semver"

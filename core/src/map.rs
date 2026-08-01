@@ -1,7 +1,7 @@
 //! AFF4 Map stream: binary `/map` entry parsing and virtual-offset resolution.
 //!
 //! An `aff4:Map` redirects virtual disk addresses to target streams
-//! (ImageStream, Zero, SymbolicStreamFF, …). The binary map file contains
+//! (ImageStream, Zero, `SymbolicStreamFF`, …). The binary map file contains
 //! fixed-width 28-byte entries; the `/idx` sidecar lists target stream URIs.
 //!
 //! Binary entry layout (little-endian, packed, no padding):
@@ -103,13 +103,14 @@ pub(crate) fn parse_map_entries(data: &[u8]) -> Vec<MapEntry> {
     let mut entries: Vec<MapEntry> = (0..n)
         .map(|i| {
             let off = i * ENTRY_SIZE;
+            // Bounded reads (ADR-0012): `/map` is attacker-controllable, so every
+            // integer comes through safe-read rather than an indexed slice that
+            // relies on `n` having been derived correctly.
             MapEntry {
-                map_offset: u64::from_le_bytes(data[off..off + 8].try_into().expect("slice")),
-                length: u64::from_le_bytes(data[off + 8..off + 16].try_into().expect("slice")),
-                target_offset: u64::from_le_bytes(
-                    data[off + 16..off + 24].try_into().expect("slice"),
-                ),
-                target_id: u32::from_le_bytes(data[off + 24..off + 28].try_into().expect("slice")),
+                map_offset: safe_read::le_u64(data, off),
+                length: safe_read::le_u64(data, off + 8),
+                target_offset: safe_read::le_u64(data, off + 16),
+                target_id: safe_read::le_u32(data, off + 24),
             }
         })
         .filter(|e| e.length > 0)

@@ -22,7 +22,7 @@ pub(crate) struct MapMeta {
     pub map_arn: String,
     /// ARN of the dependent `aff4:ImageStream`.
     pub image_stream_arn: String,
-    /// Whether the gap default is SymbolicStreamFF (0xFF) instead of Zero.
+    /// Whether the gap default is `SymbolicStreamFF` (0xFF) instead of Zero.
     pub gap_is_symbolic_ff: bool,
 }
 
@@ -229,7 +229,7 @@ fn parse_hash_term(token: &str) -> Option<crate::StoredHash> {
 
 /// Parsed metadata for one AFF4-Logical `aff4:FileImage` node.
 pub(crate) struct LogicalFileMeta {
-    /// The FileImage node IRI (its path tail names the ZIP segment).
+    /// The `FileImage` node IRI (its path tail names the ZIP segment).
     pub arn: String,
     /// `aff4:originalFileName`.
     pub original_file_name: String,
@@ -244,7 +244,7 @@ pub(crate) struct LogicalFileMeta {
 /// Parse all `aff4:FileImage` nodes from an AFF4-Logical `information.turtle`.
 ///
 /// Returns one entry per logical file. Empty when the container declares no
-/// FileImage nodes (e.g. a disk image).
+/// `FileImage` nodes (e.g. a disk image).
 pub(crate) fn parse_logical_files(turtle: &str) -> Result<Vec<LogicalFileMeta>, Aff4Error> {
     let normalized = normalize_turtle(turtle);
     let mut out = Vec::new();
@@ -274,7 +274,7 @@ pub(crate) fn parse_logical_files(turtle: &str) -> Result<Vec<LogicalFileMeta>, 
 
 /// Parsed metadata for an `aff4:EncryptedStream` and its password-wrapped keybag.
 pub(crate) struct EncryptedMeta {
-    /// The EncryptedStream IRI (its bevies hold the ciphertext chunks).
+    /// The `EncryptedStream` IRI (its bevies hold the ciphertext chunks).
     pub stream_arn: String,
     /// Chunks per bevy segment — maps a per-segment chunk to its global index.
     pub chunks_per_segment: u64,

@@ -172,7 +172,7 @@ fn read_zip_entry(archive: &mut zip::ZipArchive<std::fs::File>, name: &str) -> V
 // level data stream. Without Map support the reader opens the inner ImageStream
 // and returns wrong virtual sizes and wrong data.
 
-/// ExabyteSparse: virtual disk size must come from the aff4:Map block (9,223,372,036,854,775,296).
+/// `ExabyteSparse`: virtual disk size must come from the aff4:Map block (9,223,372,036,854,775,296).
 ///
 /// Without Map support, the reader finds the aff4:ImageStream block instead and
 /// reports the ImageStream's physical data size (4,718,592 bytes).
@@ -291,7 +291,7 @@ fn read_at(reader: &mut Aff4Reader, offset: u64, len: usize) -> Vec<u8> {
 }
 
 /// Base-Allocated fills its unallocated regions with `aff4:UnknownData`.
-/// Virtual 17825792 starts a 1 MiB-aligned UnknownData region (target_offset
+/// Virtual 17825792 starts a 1 MiB-aligned UnknownData region (`target_offset`
 /// 17825792); the first 16 bytes are the "UNKNOWN" tile.
 #[test]
 fn corpus_allocated_unknown_data_tile() {
@@ -309,7 +309,7 @@ fn corpus_allocated_unknown_data_tile() {
 
 /// The "UNKNOWN" tile resets at every 1 MiB boundary (1 MiB is not a multiple of
 /// 7), so the pattern has a seam. Reading 8 bytes straddling the first boundary
-/// of the region at target_offset 17825792 (virtual 18874365) must yield the
+/// of the region at `target_offset` 17825792 (virtual 18874365) must yield the
 /// pyaff4-oracle bytes `NKNUNKNO`, proving the 1 MiB modulus is honored.
 #[test]
 fn corpus_allocated_unknown_data_seam() {

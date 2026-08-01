@@ -5,7 +5,9 @@
 //! `NullCompressor`, `DeflateCompressor`, Snappy, and LZ4 frame compression.
 //!
 //! Images may be direct `aff4:ImageStream`s or `aff4:Map`-backed, where a Map
-//! redirects virtual addresses to ImageStream regions, Zero-fill, or SymbolicStreamFF.
+//! redirects virtual addresses to ImageStream regions, Zero-fill, or `SymbolicStreamFF`.
+
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod crypto;
 mod error;
@@ -110,7 +112,7 @@ pub struct Aff4Reader {
     /// Content digests declared on the ImageStream node (`aff4:hash`).
     image_hashes: Vec<StoredHash>,
     pos: u64,
-    /// Loaded map for Map-backed images; `None` for direct ImageStreams.
+    /// Loaded map for Map-backed images; `None` for direct `ImageStreams`.
     loaded_map: Option<LoadedMap>,
 }
 
@@ -119,7 +121,7 @@ impl std::fmt::Debug for Aff4Reader {
         f.debug_struct("Aff4Reader")
             .field("virtual_size", &self.virtual_size)
             .field("chunk_size", &self.chunk_size)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -497,6 +499,7 @@ mod tests {
     use std::io::Cursor;
     use std::io::Write as _;
     use zip::write::{SimpleFileOptions, ZipWriter};
+    use zip::CompressionMethod;
 
     fn write_tmp(data: &[u8]) -> tempfile::NamedTempFile {
         let mut f = tempfile::NamedTempFile::new().expect("tempfile");
@@ -848,7 +851,6 @@ mod tests {
     /// Build a single-segment image from an explicit turtle, bevy base, bevy bytes
     /// and 12-byte-entry index bytes.
     fn build_image(turtle: &str, base: &str, bevy: &[u8], index: &[u8]) -> Vec<u8> {
-        use zip::CompressionMethod;
         let cursor = Cursor::new(Vec::<u8>::new());
         let mut zw = ZipWriter::new(cursor);
         let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
@@ -921,7 +923,6 @@ mod tests {
              aff4:dependentStream <aff4://img> ; \
              aff4:mapGapDefaultStream aff4:SymbolicStreamFF .\n";
         // Reuse build_image for the image stream, then add the map/idx entries.
-        use zip::CompressionMethod;
         let cursor = Cursor::new(Vec::<u8>::new());
         let mut zw = ZipWriter::new(cursor);
         let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
@@ -999,7 +1000,6 @@ mod tests {
              aff4:chunksInSegment 1 ; aff4:compressionMethod aff4:NullCompressor .\n\
              <aff4://map> rdf:type aff4:Map ; aff4:size 512 ; \
              aff4:dependentStream <aff4://img> ; aff4:mapGapDefaultStream aff4:Zero .\n";
-        use zip::CompressionMethod;
         let cursor = Cursor::new(Vec::<u8>::new());
         let mut zw = ZipWriter::new(cursor);
         let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
