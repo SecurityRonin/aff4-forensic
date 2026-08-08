@@ -10,7 +10,11 @@ exclude = ["fuzz", "core/fuzz", "forensic/fuzz"]
 # (mirrors ewf-forensic: core 0.4.0 / forensic 0.5.0).
 [workspace.package]
 edition = "2021"
-rust-version = "1.85"
+# 1.87 is inherited, not a property of this workspace's own source: every
+# published zip-forensic-core (0.1.0 / 0.2.0 / 0.2.1) declares 1.87, so no
+# pin-down reaches 1.85. Lower this again once zip-forensic-core's own floor
+# is re-measured and lowered.
+rust-version = "1.87"
 license = "Apache-2.0"
 authors = ["Albert Hui"]
 repository = "https://github.com/SecurityRonin/aff4-forensic"
