@@ -350,7 +350,9 @@ pub(crate) fn parse_encrypted_meta(turtle: &str) -> Result<EncryptedMeta, Aff4Er
 /// Decode an even-length ASCII hex string to bytes; `None` on odd length or a
 /// non-hex digit.
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    // `is_multiple_of` reads as the intent and is stable since 1.87, which is
+    // this workspace's declared floor. clippy denies the manual `% 2 != 0` form.
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(s.len() / 2);
