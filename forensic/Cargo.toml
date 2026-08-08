@@ -2,7 +2,7 @@
 # layered over the `aff4` reader (core/). SCAFFOLD: see ../HANDOFF.md.
 [package]
 name         = "aff4-forensic"
-version      = "0.1.1"
+version      = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 description  = "AFF4 forensic analyzer — image-hash integrity verification and structural anomaly detection over the aff4 reader"
