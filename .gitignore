@@ -1,4 +1,4 @@
-/target/
+target/
 /fuzz/target/
 # Fuzz corpora are large binary test data — gitignored, kept locally / regenerated.
 /fuzz/corpus/
