@@ -161,7 +161,10 @@ mod tests {
     fn oracle_with_index(new_index: &[u8]) -> tempfile::NamedTempFile {
         let file = std::fs::File::open(ORACLE).unwrap();
         let mut zin = zip::ZipArchive::new(file).unwrap();
-        let names: Vec<String> = zin.file_names().map(String::from).collect();
+        let names: Vec<String> = zin
+            .file_names()
+            .map(|name| name.unwrap().into_owned())
+            .collect();
         let mut buf = std::io::Cursor::new(Vec::<u8>::new());
         {
             let mut zw = ZipWriter::new(&mut buf);

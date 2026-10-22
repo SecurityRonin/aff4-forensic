@@ -26,7 +26,10 @@ fn flip_first_raw_chunk_byte(src: &Path) -> tempfile::NamedTempFile {
     let file = std::fs::File::open(src).unwrap();
     let mut zin = zip::ZipArchive::new(file).unwrap();
 
-    let names: Vec<String> = zin.file_names().map(String::from).collect();
+    let names: Vec<String> = zin
+        .file_names()
+        .map(|name| name.unwrap().into_owned())
+        .collect();
     // The ImageStream bevy: an entry ending in "/00000000" with no extension.
     let bevy = names
         .iter()
