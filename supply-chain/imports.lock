@@ -123,8 +123,8 @@ when = "2026-01-06"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
 [[publisher.zip-forensic-core]]
-version = "0.2.2"
-when = "2026-08-08"
+version = "0.2.3"
+when = "2026-11-04"
 user-id = 347968
 user-login = "h4x0r"
 user-name = "Albert Hui"
