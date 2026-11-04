@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7](https://github.com/SecurityRonin/aff4-forensic/compare/aff4-v0.2.6...aff4-v0.2.7) - 2026-11-04
+
+### Fixed
+
+- *(security)* move to zip-forensic-core 0.2 and the zip 9 fixture writer
+
 ## [0.2.6](https://github.com/SecurityRonin/aff4-forensic/compare/aff4-v0.2.5...aff4-v0.2.6) - 2026-08-08
 
 ### Fixed
