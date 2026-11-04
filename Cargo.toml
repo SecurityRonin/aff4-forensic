@@ -28,7 +28,7 @@ homepage = "https://github.com/SecurityRonin/aff4-forensic"
 [workspace.dependencies]
 # Bounded integer reads over untrusted bytes (ADR-0012).
 safe-read = "0.2"
-aff4 = { path = "core", version = "0.2.6" }
+aff4 = { path = "core", version = "0.2.7" }
 thiserror = "2"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 zip-forensic-core = "0.2"
