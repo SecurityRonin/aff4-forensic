@@ -17,6 +17,14 @@ allow = [
 [bans]
 multiple-versions = "deny"
 wildcards = "deny"
+# zip 9 (the optional test-helpers fixture writer; zip < 9 carries RUSTSEC-2026-0367/
+# 0368/0369/0429) always depends on getrandom 0.4. On wasm32 only, that brings a
+# second wit-bindgen (via wasip3) and syn 3 (via wasm-bindgen); neither compiles for
+# any target this crate ships. Drop these when getrandom/wasm-bindgen converge.
+skip = [
+    { crate = "wit-bindgen@0.51.0", reason = "wasm32-only, via zip 9 -> getrandom 0.4 -> wasip3" },
+    { crate = "syn@3.0.9", reason = "wasm32-only, via zip 9 -> getrandom 0.4 -> wasm-bindgen" },
+]
 
 [sources]
 unknown-registry = "deny"

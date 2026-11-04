@@ -128,9 +128,10 @@ fn reference_bytes_via_zip_snap(path: &Path, offset: u64, len: usize) -> Vec<u8>
     let segment0_suffix = format!("/{:08x}", 0u32);
     let bevy_name = archive
         .file_names()
+        // zip 9: file_names() yields Result (it validates each stored name).
+        .map(|n| n.expect("entry name should decode").into_owned())
         .find(|n| n.ends_with(&segment0_suffix) && !n.contains('.'))
-        .expect("no segment 0 bevy found")
-        .to_string();
+        .expect("no segment 0 bevy found");
     let index_name = format!("{bevy_name}.index");
 
     let index_bytes = read_zip_entry(&mut archive, &index_name);
