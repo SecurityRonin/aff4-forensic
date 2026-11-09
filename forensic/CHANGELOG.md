@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.0](https://github.com/SecurityRonin/aff4-forensic/compare/aff4-forensic-v0.1.2...aff4-forensic-v0.2.0) - 2026-11-09
+
+### Documentation
+
+- *(error)* [**breaking**] record the public dependencies that make this release breaking
+
+### Fixed
+
+- *(security)* move to zip-forensic-core 0.2 and the zip 9 fixture writer
 # Changelog
 
 All notable changes to `aff4-forensic` are documented here. The format follows
