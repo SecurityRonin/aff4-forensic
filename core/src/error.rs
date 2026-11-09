@@ -6,6 +6,9 @@
 pub enum Aff4Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// A ZIP-layer error. The payload is `zip-forensic-core`'s
+    /// [`zip_core::ZipCoreError`], which makes that crate a public dependency:
+    /// moving it to an incompatible version changes this variant's type.
     #[error("ZIP error: {0}")]
     Zip(#[from] zip_core::ZipCoreError),
     #[error("not a valid AFF4 image: {0}")]

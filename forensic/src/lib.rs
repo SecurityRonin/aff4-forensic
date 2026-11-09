@@ -92,6 +92,8 @@ impl Observation for Aff4Anomaly {
 /// # Errors
 /// Returns [`Aff4Error`] if the image cannot be opened or parsed — including
 /// [`Aff4Error::Encrypted`] for an encrypted image (refused, never decoded).
+/// [`Aff4Error`] is the `aff4` reader's type, so `aff4` is a public dependency
+/// of this crate.
 pub fn audit_image(path: &Path) -> Result<Vec<Finding>, Aff4Error> {
     let mut reader = Aff4Reader::open(path)?;
     let anomalies = verify_image_hashes(&mut reader)?;
