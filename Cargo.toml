@@ -31,7 +31,9 @@ safe-read = "0.2"
 aff4 = { path = "core", version = "0.2.6" }
 thiserror = "2"
 zip = { version = "9", default-features = false, features = ["deflate"] }
-zip-forensic-core = "0.2"
+# 0.2.3 is the floor, not just what the lockfile picks: 0.2.0-0.2.2 depend on
+# ruzstd ^0.8 (RUSTSEC-2026-0344), and a consumer's own lock could keep them.
+zip-forensic-core = "0.2.3"
 flate2 = "1"
 snap = "1"
 lz4_flex = "0.11"
